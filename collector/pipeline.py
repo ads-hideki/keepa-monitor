@@ -10,6 +10,7 @@
 
 ログには件数とトークン数だけを書く（公開リポジトリのため、商品名や ASIN は書かない）。
 """
+import time
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
@@ -27,10 +28,24 @@ def _mean(values):
     return round(sum(vals) / len(vals)) if vals else None
 
 
+
+def mark_auto(items, limit=2):
+    """利用者が選ぶまで自動で監視する候補に印を付ける。推奨のうち、いま出品があるものの上位。
+
+    出品がない商品（販売終了の古い出品など）を自動で選ぶと、在庫切れの通知が意味を持たなくなるため除く。
+    """
+    n = 0
+    for it in items:
+        ok = it.get('group') == 'rec' and it.get('price') is not None and n < limit
+        it['auto'] = ok
+        n += 1 if ok else 0
+    return items
+
 class Run:
     def __init__(self, store, keepa, cfg, now=None, log=print, dash_fetch=None):
         self.store, self.keepa, self.cfg, self.log = store, keepa, cfg, log
         self.now = now or datetime.now(JST)
+        self._t0 = time.monotonic()
         self.today = self.now.date()
         self.iso = self.today.strftime('%Y-%m-%d')
         self.dash_fetch = dash_fetch
@@ -60,6 +75,8 @@ class Run:
 
     def load_candidates(self):
         self.candidates = self.store.list('candidates')
+        for doc in self.candidates.values():
+            mark_auto(doc.get('items') or [])
 
     # ------------------------------------------------------------------ 自社商品の自動追加
     def sync_own(self):
@@ -324,9 +341,28 @@ class Run:
             items.append({'catId': cat_id, 'name': doc['name'], 'size': len(ranking), 'parents': parents,
                           'accts': sorted({self.families[p]['account'] for p in parents}),
                           'top': top, 'tracks': tracks, 'days': len(doc['top'])})
+        self._name_same_categories(items)
         self.cat_items = items
         self.log('カテゴリ順位: {} カテゴリ'.format(len(items)))
         return items
+
+    def _name_same_categories(self, items):
+        """同じ名前のカテゴリ（レディースとメンズの「トートバッグ」など）に、区別できる上位カテゴリ名を付ける。"""
+        groups = defaultdict(list)
+        for it in items:
+            groups[it['name']].append(it)
+        for name, group in groups.items():
+            if len(group) < 2:
+                continue
+            paths = []
+            for it in group:
+                path = [c.get('name') or '' for c in (self.families[it['parents'][0]].get('cats') or [])]
+                ids = [c.get('id') for c in (self.families[it['parents'][0]].get('cats') or [])]
+                paths.append(path[:ids.index(it['catId'])] if it['catId'] in ids else path[:-1])
+            for it, path in zip(group, paths):
+                label = next((path[-k] for k in range(1, len(path) + 1)
+                              if len({(p[-k] if len(p) >= k else '') for p in paths}) == len(paths)), None)
+                it['name'] = '{}（{}）'.format(name, label or ' > '.join(path) or it['catId'])
 
     # ------------------------------------------------------------------ 競合候補
     def build_candidates(self, limit=0):
@@ -408,7 +444,8 @@ class Run:
         for n, d in enumerate(keep):
             items.append({'asin': d['asin'], 'title': d['title'][:80], 'brand': d['brand'], 'image': d['image'], 'price': d['price'],
                           'rating': d['rating'], 'reviews': d['reviews'], 'sold': d['sold'], 'catPos': d['catPos'], 'searchPos': d['searchPos'],
-                          'group': d['group'], 'why': d['why'], 'auto': d['group'] == 'rec' and n < 2})
+                          'group': d['group'], 'why': d['why'], 'auto': False})
+        mark_auto(items)
         return {'updatedAt': self.now.isoformat(), 'kw': kw, 'terms': terms, 'cat': cat, 'pool': len(uniq), 'items': items}
 
     # ------------------------------------------------------------------ 販売実績
@@ -444,7 +481,9 @@ class Run:
         own_brands = {f['brand'].strip().lower() for f in self.families.values() if f.get('brand')}
         try:
             selection = {'rootCategory': roots, 'current_NEW_gte': prm['priceMin'], 'current_NEW_lte': prm['priceMax'],
-                         'monthlySold_gte': prm['soldMin'], 'perPage': 100, 'page': 0, 'sort': [['current_SALES', 'asc']]}
+                         'monthlySold_gte': prm['soldMin'], 'current_COUNT_REVIEWS_lte': prm['reviewsMax'],
+                         'current_SALES_gte': 1, 'current_SALES_lte': prm['rankMax'],
+                         'perPage': 100, 'page': 0, 'sort': [['current_SALES', 'asc']]}
             asins, total = self.keepa.finder(selection)
             prods = self.keepa.products(asins[:100], history=False, rating=True, label='リサーチ（商品）')
         except KeepaError as e:
@@ -554,7 +593,7 @@ class Run:
         return items
 
     def write_views(self, job, own_items=None, cat_items=None, sales=True):
-        now = self.now.isoformat()
+        now = (self.now + timedelta(seconds=int(time.monotonic() - self._t0))).isoformat()      # 書き出した時刻
         if own_items is None:
             own_items = self.own_view()
             self.store.set('views/own', {'updatedAt': now, 'items': own_items})

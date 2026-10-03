@@ -5,7 +5,7 @@ import { monthLabel, num, yen } from '../lib/format';
 import type { Db } from '../lib/types';
 
 const COLORS = ['--s1', '--s2', '--s3', '--s4'];
-const units = (v: number) => `${num(v)}点以上`;
+const units = (v: number) => (v > 0 ? `${num(v)}点以上` : '表示なし');
 
 export default function Sales({ db, acct, label }: { db: Db; acct: string; label: (a: string) => string }) {
   const list = db.own.filter(o => acct === 'all' || o.acct === acct);
@@ -26,7 +26,7 @@ export default function Sales({ db, acct, label }: { db: Db; acct: string; label
         <div className="card-h">
           <div>
             <h2>月別の販売数（過去24か月）</h2>
-            <p className="sub">Amazon の「過去1か月で○点以上購入」の表示の履歴です。値は段階的で、正確な販売数ではありません。売れる時期と競合との差を確認できます。</p>
+            <p className="sub">Amazon の「過去1か月で○点以上購入」の表示の履歴です。値は段階的で、正確な販売数ではありません。「表示なし」は、その月に表示が出ていなかったことを示します（50点未満の目安）。</p>
           </div>
           <label className="fld">自社商品
             <select value={p.parent} onChange={e => setSel(e.target.value)}>
@@ -54,7 +54,7 @@ export default function Sales({ db, acct, label }: { db: Db; acct: string; label
                     <td className="name"><b>{se.name}</b>{i === 0 && <> <Pill kind="own">自社</Pill></>}</td>
                     <td className="n">{cur != null ? units(cur) : <span className="mut">不明</span>}</td>
                     <td className="n">{d === 0 ? <span className="mut">変化なし</span> : <><Arrow dir={d} />{num(Math.abs(d))}点</>}</td>
-                    <td>{mx != null ? `${labels[a.indexOf(mx)]}（${units(mx)}）` : <span className="mut">不明</span>}</td>
+                    <td>{mx == null ? <span className="mut">不明</span> : mx > 0 ? `${labels[a.indexOf(mx)]}（${units(mx)}）` : <span className="mut">表示なし</span>}</td>
                   </tr>
                 );
               })}

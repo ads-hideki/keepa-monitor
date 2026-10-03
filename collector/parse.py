@@ -118,10 +118,19 @@ def coupon_started_recently(p, now, hours=36):
     return bool(last_v) and not prev_v and (now - to_dt(last_t)) <= timedelta(hours=hours)
 
 
+_COUNTDOWN = re.compile(r'\d{1,2}:\d{2}')
+
+
 def deal_text(p):
+    """セールの表示名。残り時間つきのバッジ（「終了まで: 20:03:57」など）は「タイムセール」にまとめる。"""
     for d in p.get('deals') or []:
         if isinstance(d, dict):
-            return d.get('badge') or 'セール'
+            badge = (d.get('badge') or '').strip()
+            if not badge:
+                return 'セール'
+            if badge.startswith('終了まで') or _COUNTDOWN.search(badge):
+                return 'タイムセール'
+            return badge
     return None
 
 
@@ -139,11 +148,12 @@ def variation_label(p, asin):
 
 
 def monthly_sold(p):
-    """月ごとの「過去1か月で○点以上購入」。{'2026-09': 1000, ...}（各月の最後の値）"""
+    """月ごとの「過去1か月で○点以上購入」。{'2026-09': 1000, ...}（各月の最後の値）。表示がない月は 0。"""
     h = p.get('monthlySoldHistory') or []
     out = {}
     for i in range(0, len(h) - 1, 2):
-        out[to_dt(h[i]).strftime('%Y-%m')] = h[i + 1]
+        v = h[i + 1]
+        out[to_dt(h[i]).strftime('%Y-%m')] = v if isinstance(v, int) and v > 0 else 0      # -1 は「表示なし」
     return out
 
 
@@ -239,7 +249,7 @@ def brief(p):
         'rank': current(p, CSV_SALES),
         'rating': (rating / 10.0) if rating is not None else None,
         'reviews': current(p, CSV_REVIEWS),
-        'sold': p.get('monthlySold'),
+        'sold': p.get('monthlySold') if isinstance(p.get('monthlySold'), int) and p.get('monthlySold') > 0 else None,
         'coupon': coupon_text(p.get('coupon')),
         'deal': deal_text(p),
         'amazonSells': current(p, CSV_AMAZON) is not None,

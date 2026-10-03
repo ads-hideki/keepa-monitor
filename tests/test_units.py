@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -81,3 +81,26 @@ def test_store_rejects_shapes_firestore_cannot_save():
     with pytest.raises(StoreError):
         s.set('views/x', {1: 'a'})
     s.set('views/x', {'a': [{'b': [1, 2]}]})
+
+
+def test_deal_text_countdown_badge_is_time_sale():
+    assert parse.deal_text({'deals': [{'badge': '終了まで: 20:03:57'}]}) == 'タイムセール'
+    assert parse.deal_text({'deals': [{'badge': 'タイムセール'}]}) == 'タイムセール'
+    assert parse.deal_text({'deals': [{'badge': 'プライム感謝祭'}]}) == 'プライム感謝祭'
+    assert parse.deal_text({'deals': [{}]}) == 'セール'
+    assert parse.deal_text({}) is None
+
+
+def test_monthly_sold_treats_missing_badge_as_zero():
+    m0 = int(datetime(2026, 8, 10, tzinfo=parse.JST).timestamp() // 60) - parse.KEEPA_OFFSET
+    m1 = int(datetime(2026, 9, 10, tzinfo=parse.JST).timestamp() // 60) - parse.KEEPA_OFFSET
+    got = parse.monthly_sold({'monthlySoldHistory': [m0, 300, m1, -1]})
+    assert got == {'2026-08': 300, '2026-09': 0}
+    assert parse.brief({'asin': 'A', 'monthlySold': -1})['sold'] is None
+
+
+def test_mark_auto_skips_candidates_without_offer():
+    from collector.pipeline import mark_auto
+    items = [{'group': 'rec', 'price': None}, {'group': 'rec', 'price': 1000}, {'group': 'big', 'price': 900},
+             {'group': 'rec', 'price': 1200}, {'group': 'rec', 'price': 1300}]
+    assert [i['auto'] for i in mark_auto(items)] == [False, True, False, True, False]
