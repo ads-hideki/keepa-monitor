@@ -17,6 +17,24 @@ const TABS: [TabId, string, string][] = [
 ];
 const isTab = (v: string): v is TabId => TABS.some(t => t[0] === v);
 
+const APP_NAME = 'MARKET RADAR';
+const APP_SUB = 'Amazon 市場監視システム';
+
+function Brand({ sub }: { sub?: boolean }) {
+  return (
+    <div className="brand">
+      <svg className="brand-m" viewBox="0 0 32 32" aria-hidden="true">
+        <circle cx="16" cy="16" r="13" /><circle cx="16" cy="16" r="7.5" />
+        <path d="M16 16 26.5 8.5" /><circle className="brand-d" cx="21.5" cy="20.5" r="2" />
+      </svg>
+      <div className="brand-t">
+        <h1 className="brand-n">{APP_NAME}</h1>
+        {sub && <p className="brand-s">{APP_SUB}</p>}
+      </div>
+    </div>
+  );
+}
+
 function Login({ onError, error }: { onError: (m: string) => void; error: string }) {
   const [id, setId] = useState('');
   const [pw, setPw] = useState('');
@@ -31,7 +49,8 @@ function Login({ onError, error }: { onError: (m: string) => void; error: string
   return (
     <div className="login">
       <form onSubmit={submit}>
-        <div><h1>競合モニター</h1><p className="sub">ID とパスワードを入力してください。</p></div>
+        <Brand sub />
+        <p className="sub">ID とパスワードを入力してください。</p>
         <label className="fld">ID
           <input type="text" value={id} onChange={e => setId(e.target.value)} autoComplete="username" autoCapitalize="off" spellCheck={false} autoFocus disabled={busy} />
         </label>
@@ -76,7 +95,7 @@ export default function App() {
     return (
       <div className="login">
         <form onSubmit={e => { e.preventDefault(); load(); }}>
-          <h1>競合モニター</h1>
+          <Brand sub />
           {loading ? <p className="sub">読み込んでいます…</p> : <p className="err" role="alert">{error || 'データを読み込めませんでした。'}</p>}
           {!loading && <button type="submit" className="btn">もう一度読み込む</button>}
           {!loading && !MOCK && <button type="button" className="ghost" onClick={() => source.logout()}>別の ID でログイン</button>}
@@ -91,8 +110,8 @@ export default function App() {
     <div className="wrap">
       <header className="head">
         <div className="head-t">
-          <div className="head-n"><h1>競合モニター</h1>{MOCK && <span className="demo">模擬データ</span>}</div>
-          <p className="sub">{db.overview ? `${dateTime(db.overview.updatedAt)} 取得` : 'まだ取得結果がありません'}</p>
+          <div className="head-n"><Brand />{MOCK && <span className="demo">模擬データ</span>}</div>
+          <p className="sub">{APP_SUB}・{db.overview ? `${dateTime(db.overview.updatedAt)} 取得` : 'まだ取得結果がありません'}</p>
         </div>
         <div className="top-r">
           <div className="filter">

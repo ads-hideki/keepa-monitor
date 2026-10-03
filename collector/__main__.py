@@ -18,6 +18,11 @@ def main(argv):
     if len(argv) != 2 or argv[1] not in JOBS:
         print(__doc__)
         return 2
+    # GitHub Actions では出力がまとめて表示されるので、1 行ごとに出す
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except (AttributeError, ValueError):
+        pass
     job, cfg, store, keepa = argv[1], Config(), None, None
     try:
         keepa = Keepa(cfg.keepa_key, max_runtime_s=cfg.max_runtime_s)

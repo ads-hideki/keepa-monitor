@@ -45,6 +45,12 @@ button,input,select{font:inherit;color:inherit}
 .head{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:flex-end;justify-content:space-between}
 .head-t{display:flex;flex-direction:column;gap:4px;min-width:0}
 .head-n{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}
+.brand-m{width:28px;height:28px;flex:none;fill:none;stroke:var(--accent);stroke-width:2;stroke-linecap:round}
+.brand-m .brand-d{fill:var(--accent);stroke:none}
+.brand-t{display:flex;flex-direction:column;min-width:0}
+.brand-n{font-size:19px;font-weight:800;letter-spacing:.14em;line-height:1.2}
+.brand-s{color:var(--ink2);font-size:12px;letter-spacing:.06em}
 .demo{font-size:12px;font-weight:700;letter-spacing:.04em;padding:2px 10px;border-radius:999px;background:var(--ink);color:var(--bg)}
 .seg{display:flex;flex-wrap:wrap;gap:4px;padding:3px;background:var(--surface);border:1px solid var(--line);border-radius:8px}
 .seg button{border:0;background:transparent;padding:5px 12px;border-radius:6px;cursor:pointer;color:var(--ink2);font-size:13px}
