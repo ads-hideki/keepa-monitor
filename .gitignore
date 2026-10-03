@@ -1,0 +1,24 @@
+# このリポジトリは公開です。鍵と、事業の内容が分かるデータは絶対に入れないこと。
+serviceAccount*.json
+*-sa.json
+*.serviceAccount.json
+.env
+.env.*
+!.env.example
+.keepa_api_key
+data/
+*.csv
+*.xlsx
+
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+web/dist/
+web/build/
+.firebase/
+*.log
+
+# Windows が自動で作るファイル
+desktop.ini
+Thumbs.db

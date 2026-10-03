@@ -1,0 +1,47 @@
+rules_version = '2';
+// ------------------------------------------------------------------
+// 方針
+//  - ログインした人のうち、allowed_users に登録された人だけが読める。
+//    （メール/パスワード認証は、設定によっては誰でも新規登録できてしまう。
+//      登録されただけの人には何も見せないよう、名簿で二重に確かめる）
+//  - 画面から書けるのは settings だけ。取得結果（views / candidates）は読み取りのみ。
+//  - 取得スクリプトはサービスアカウントで書くので、このルールの影響を受けない。
+//
+// 反映: firebase deploy --only firestore:rules
+// ------------------------------------------------------------------
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function allowed() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/allowed_users/$(request.auth.uid));
+    }
+
+    // 画面用データと競合候補: 読み取りのみ
+    match /views/{doc} {
+      allow read: if allowed();
+      allow write: if false;
+    }
+    match /candidates/{doc} {
+      allow read: if allowed();
+      allow write: if false;
+    }
+
+    // 利用者の設定（競合の選択、キーワード、除外ブランド、通知の基準、リサーチ条件）
+    match /settings/{doc} {
+      allow read: if allowed();
+      allow write: if allowed() && doc in ['families', 'brands', 'thresholds', 'research'];
+    }
+
+    // 名簿: 自分が載っているかだけ確認できる。編集は Firebase コンソールから
+    match /allowed_users/{uid} {
+      allow get: if request.auth != null && request.auth.uid == uid;
+      allow list, write: if false;
+    }
+
+    // それ以外（state / cats など作業用データ）は画面から触れない
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

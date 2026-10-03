@@ -1,0 +1,56 @@
+name: collect（Keepa からの取得）
+
+# 予約実行（時刻は UTC。日本時間は +9 時間）
+#   20:30 UTC = 05:30 JST … daily（自社商品の取り込みから全部）
+#   01:00 / 05:00 / 10:00 UTC = 10:00 / 14:00 / 19:00 JST … prices（競合の価格・販促・在庫だけ）
+# GitHub の予約実行は混雑時に遅れることがある。この取得は時刻が多少ずれても問題ない。
+on:
+  schedule:
+    - cron: '30 20 * * *'
+    - cron: '0 1,5,10 * * *'
+  workflow_dispatch:
+    inputs:
+      job:
+        description: '実行するジョブ'
+        type: choice
+        options: [prices, daily, candidates, research]
+        default: prices
+
+permissions:
+  contents: read
+
+# 2 つ同時に動くとトークンを取り合うので、1 つずつ順番に実行する
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: ジョブを決める
+        id: job
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_JOB: ${{ inputs.job }}
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then echo "name=$INPUT_JOB" >> "$GITHUB_OUTPUT"
+          elif [ "$SCHEDULE" = "30 20 * * *" ]; then echo "name=daily" >> "$GITHUB_OUTPUT"
+          else echo "name=prices" >> "$GITHUB_OUTPUT"; fi
+      - name: 取得を実行
+        env:
+          JOB: ${{ steps.job.outputs.name }}
+          KEEPA_API_KEY: ${{ secrets.KEEPA_API_KEY }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          DASHBOARD_PROJECT_ID: ${{ secrets.DASHBOARD_PROJECT_ID }}
+          DASHBOARD_ACCOUNTS: ${{ secrets.DASHBOARD_ACCOUNTS }}
+          MAX_RUNTIME_MINUTES: '300'
+        run: python -m collector "$JOB"

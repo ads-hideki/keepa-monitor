@@ -1,0 +1,24 @@
+name: keepalive（予約実行の自動停止を防ぐ）
+
+# GitHub は 60 日間リポジトリに動きがないと、予約実行を自動で止める。
+# 月に 1 回、空のコミットを積んで「活動あり」にする。
+# Settings → Actions → General → Workflow permissions を「Read and write」にしておくこと。
+on:
+  schedule:
+    - cron: '0 0 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 空のコミットを push
+        run: |
+          git config user.name  "keepalive-bot"
+          git config user.email "keepalive-bot@users.noreply.github.com"
+          git commit --allow-empty -m "chore: keepalive $(date -u +%Y-%m-%d)"
+          git push
