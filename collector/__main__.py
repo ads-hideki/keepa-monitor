@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""使い方: python -m collector <daily|prices|candidates|research>"""
+"""使い方: python -m collector <auto|daily|prices|candidates|research>"""
 import os
 import sys
 import traceback
@@ -11,7 +11,7 @@ from .parse import JST
 from .pipeline import Run
 from .store import FirestoreStore
 
-JOBS = ('daily', 'prices', 'candidates', 'research')
+JOBS = ('auto', 'daily', 'prices', 'candidates', 'research')
 
 
 def main(argv):
@@ -41,7 +41,10 @@ def main(argv):
             except Exception:                                 # noqa: BLE001
                 pass
         return 1
-    print('完了: 消費トークン {} / 残り {}'.format(keepa.spent, keepa.tokens_left))
+    if keepa.spent:
+        print('完了: 消費トークン {} / 残り {}'.format(keepa.spent, keepa.tokens_left))
+    else:
+        print('完了: Keepa は呼び出していません')
     return 0
 
 

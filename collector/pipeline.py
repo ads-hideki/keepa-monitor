@@ -28,6 +28,19 @@ def _mean(values):
     return round(sum(vals) / len(vals)) if vals else None
 
 
+# 予約実行の回（日本時間）。この時刻を過ぎて、まだ取得していなければ実行する。
+DAILY_FROM = (2, 0)
+PRICE_SLOTS = ((10, 0), (14, 0), (19, 0))
+MAX_DAILY_TRIES = 3
+
+
+def _parse_time(iso):
+    try:
+        t = datetime.fromisoformat(iso)
+    except (TypeError, ValueError):
+        return None
+    return t.astimezone(JST) if t.tzinfo else t.replace(tzinfo=JST)
+
 
 def mark_auto(items, limit=2):
     """利用者が選ぶまで自動で監視する候補に印を付ける。推奨のうち、いま出品があるものの上位。
@@ -593,7 +606,7 @@ class Run:
         return items
 
     def write_views(self, job, own_items=None, cat_items=None, sales=True):
-        now = (self.now + timedelta(seconds=int(time.monotonic() - self._t0))).isoformat()      # 書き出した時刻
+        now = self._wall().isoformat()                    # 書き出した時刻
         if own_items is None:
             own_items = self.own_view()
             self.store.set('views/own', {'updatedAt': now, 'items': own_items})
@@ -649,6 +662,44 @@ class Run:
         own_items = (self.store.get('views/own') or {}).get('items') or []
         cat_items = (self.store.get('views/cats') or {}).get('items') or []
         self.write_views('prices', own_items=own_items, cat_items=cat_items, sales=False)
+
+    def job_auto(self):
+        """予約実行から呼ぶ。いまの時刻と、今日すでに取得した内容を見て、必要なジョブだけを実行する。
+
+        GitHub の予約実行は時刻が保証されず、遅れたり 1 回分が飛んだりする。そこで各回の時刻のあとに
+        何度か起動させ、済んでいなければ実行し、済んでいれば何もせずに終える。
+        済んだかどうかは、画面用データの更新時刻で判断する（手動で実行した分も数に入る）。
+        """
+        own_at = _parse_time((self.store.get('views/own') or {}).get('updatedAt'))          # 朝の取得だけが更新する
+        comps_at = _parse_time((self.store.get('views/comps') or {}).get('updatedAt'))      # 競合を取得するたびに更新する
+        minute = self.now.hour * 60 + self.now.minute
+        daily_done = own_at is not None and own_at.date() == self.today
+        if minute >= DAILY_FROM[0] * 60 + DAILY_FROM[1] and not daily_done:
+            st = self.store.get('state/schedule') or {}
+            if st.get('date') != self.iso:
+                st = {'date': self.iso, 'tries': 0}
+            if st['tries'] < MAX_DAILY_TRIES:
+                st['tries'] += 1
+                self.store.set('state/schedule', st)             # 途中で失敗しても、試した回数は残す
+                self.log('予約実行: 朝の取得を実行します（今日 {} 回目）'.format(st['tries']))
+                self.job_daily()
+                return 'daily'
+            self.log('予約実行: 朝の取得は今日 {} 回失敗しています。手動で確認してください'.format(st['tries']))
+        due = []
+        for h, m in PRICE_SLOTS:
+            slot = self.now.replace(hour=h, minute=m, second=0, microsecond=0)
+            if self.now >= slot and (comps_at is None or comps_at < slot):
+                due.append('{}時'.format(h))
+        if due:
+            self.log('予約実行: 競合の価格を取得します（{} の回）'.format('、'.join(due)))
+            self.job_prices()
+            return 'prices'
+        self.log('予約実行: いま実行するものはありません（今日の分は取得済み）')
+        return 'none'
+
+    def _wall(self):
+        """いまの時刻（開始時刻 + 経過時間）。"""
+        return self.now + timedelta(seconds=int(time.monotonic() - self._t0))
 
     def job_candidates(self):
         """競合候補だけをまとめて作る（初回や、キーワードを直したあとに使う）。"""

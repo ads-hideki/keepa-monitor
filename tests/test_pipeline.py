@@ -207,3 +207,53 @@ def test_candidate_limit_and_regenerate():
     run3, _, _, _, _ = make(store=store, now=later + timedelta(minutes=5), cfg=cfg)
     assert run3.job_candidates() == 1
     assert store.get('candidates/B0PARENT01')['kw'] == ['丸型']
+
+
+def test_auto_runs_each_slot_once_and_skips_when_done():
+    at = lambda h, m: NOW.replace(hour=h, minute=m)
+    store = MemoryStore()
+    run, _, http, _, _ = make(store=store, now=at(1, 30))
+    assert run.job_auto() == 'none' and not http.requests            # 2時より前は何もしない
+    run, _, _, _, _ = make(store=store, now=at(2, 7))
+    assert run.job_auto() == 'daily' and store.get('views/overview')['job'] == 'daily'
+    run, _, http, logs, _ = make(store=store, now=at(2, 37))
+    assert run.job_auto() == 'none' and not http.requests            # 予備の起動は Keepa を呼ばずに終わる
+    assert any('取得済み' in line for line in logs)
+    run, _, _, _, _ = make(store=store, now=at(10, 7))
+    assert run.job_auto() == 'prices' and store.get('views/overview')['job'] == 'prices'
+    run, _, http, _, _ = make(store=store, now=at(10, 37))
+    assert run.job_auto() == 'none' and not http.requests
+    run, _, _, logs, _ = make(store=store, now=at(19, 37))            # 14時の回が飛んでも、19時の起動でまとめて済ませる
+    assert run.job_auto() == 'prices' and any('14時、19時' in line for line in logs)
+    run, _, http, _, _ = make(store=store, now=at(20, 7))
+    assert run.job_auto() == 'none' and not http.requests
+    run, _, _, _, _ = make(store=store, now=at(2, 7) + timedelta(days=1))
+    assert run.job_auto() == 'daily'                                 # 翌日はまた朝の取得から
+
+
+def test_auto_counts_manual_runs_and_gives_up_after_failures():
+    at = lambda h, m: NOW.replace(hour=h, minute=m)
+    store = MemoryStore()
+    run, _, _, _, _ = make(store=store, now=at(10, 7))                # 朝の起動が全部飛んだ日は、10時の起動で朝の取得を行う
+    assert run.job_auto() == 'daily'
+    run, _, http, _, _ = make(store=store, now=at(10, 37))
+    assert run.job_auto() == 'none' and not http.requests            # 10時の回も済んだ扱い
+
+    store = MemoryStore()
+    run, _, _, _, _ = make(store=store, now=at(7, 50))
+    run.job_daily()                                                  # 手動で実行した分も数に入る
+    run, _, http, _, _ = make(store=store, now=at(8, 7))
+    assert run.job_auto() == 'none' and not http.requests
+
+    store = MemoryStore()
+    for n in range(3):                                               # 朝の取得が 3 回続けて失敗
+        run, _, _, _, _ = make(store=store, now=at(2, 7 + n))
+        run.job_daily = lambda: (_ for _ in ()).throw(RuntimeError('x'))
+        try:
+            run.job_auto()
+        except RuntimeError:
+            pass
+    assert store.get('state/schedule')['tries'] == 3
+    run, _, http, logs, _ = make(store=store, now=at(4, 7))
+    assert run.job_auto() == 'none' and not http.requests            # 4 回目は試さない
+    assert any('失敗' in line for line in logs)
