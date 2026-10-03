@@ -1,20 +1,23 @@
 name: collect（Keepa からの取得）
 
 # 予約実行（時刻は UTC。日本時間は +9 時間）
-#   20:30 UTC = 05:30 JST … daily（自社商品の取り込みから全部）
-#   01:00 / 05:00 / 10:00 UTC = 10:00 / 14:00 / 19:00 JST … prices（競合の価格・販促・在庫だけ）
-# GitHub の予約実行は混雑時に遅れることがある。この取得は時刻が多少ずれても問題ない。
+# GitHub の予約実行は時刻が保証されず、遅れたり 1 回分が飛んだりする。
+# そこで各回の時刻のあとに何度か起動し、auto ジョブが「まだ取得していない回」だけを実行する。
+# 取得済みなら Keepa を呼ばずに数十秒で終わる。
+#   朝の取得（自社商品の取り込みから全部）… 02:07〜06:37 JST に 30 分おき
+#   競合の価格（10 時 / 14 時 / 19 時 JST）… 各回 :07、:37、翌時 :07 の 3 回
 on:
   schedule:
-    - cron: '30 20 * * *'
-    - cron: '0 1,5,10 * * *'
+    - cron: '7,37 17-21 * * *'
+    - cron: '7,37 1,5,10 * * *'
+    - cron: '7 2,6,11 * * *'
   workflow_dispatch:
     inputs:
       job:
         description: '実行するジョブ'
         type: choice
-        options: [prices, daily, candidates, research]
-        default: prices
+        options: [auto, prices, daily, candidates, research]
+        default: auto
 
 permissions:
   contents: read
@@ -40,11 +43,9 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           INPUT_JOB: ${{ inputs.job }}
-          SCHEDULE: ${{ github.event.schedule }}
         run: |
           if [ "$EVENT" = "workflow_dispatch" ]; then echo "name=$INPUT_JOB" >> "$GITHUB_OUTPUT"
-          elif [ "$SCHEDULE" = "30 20 * * *" ]; then echo "name=daily" >> "$GITHUB_OUTPUT"
-          else echo "name=prices" >> "$GITHUB_OUTPUT"; fi
+          else echo "name=auto" >> "$GITHUB_OUTPUT"; fi
       - name: 取得を実行
         env:
           JOB: ${{ steps.job.outputs.name }}
