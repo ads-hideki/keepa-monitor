@@ -42,6 +42,7 @@ PRICE_SLOTS = ((10, 0), (14, 0), (19, 0))
 MAX_DAILY_TRIES = 3
 RESEARCH_POOL = 300          # リサーチで候補として取る件数の上限
 MARKET_TOP = 20              # 市場 1 つにつき評価する上位商品の数
+DEAL_ALERTS_MAX = 5          # セール開始の通知がこれより多い日は、アカウントごとに 1 件にまとめる
 MARKET_COMPARE = 6           # 比較用に調べる市場の数
 MARKET_KEYWORD_POOL = 30     # キーワードで集める市場 1 つにつき調べる商品の数
 MARKET_HISTORY_DAYS = 400    # 最盛期を見るために取る履歴の日数（トークンは変わらない）
@@ -818,9 +819,37 @@ class Run:
         return {'updatedAt': self._wall().isoformat(), 'band': list(band), 'rules': dict(MARKET_RULES), 'items': items}
 
     # ------------------------------------------------------------------ 通知
+    @staticmethod
+    def _collapse_deals(alerts):
+        """セールの開始が同じ日に重なったとき（大型セールの初日など）は、アカウントごとに 1 件にまとめる。"""
+        by_acct = defaultdict(list)
+        for a in alerts:
+            if a.get('deal'):
+                by_acct[a['acct']].append(a)
+        out = []
+        done = set()
+        for a in alerts:
+            if not a.get('deal'):
+                out.append(a)
+                continue
+            group = by_acct[a['acct']]
+            if len(group) <= DEAL_ALERTS_MAX:
+                out.append({k: v for k, v in a.items() if k != 'deal'})
+            elif a['acct'] not in done:
+                done.add(a['acct'])
+                out.append({'sev': 'warn', 'type': 'promo', 'tab': 'price', 'acct': a['acct'], 'n': len(group),
+                            'text': '競合 {}件がセールを開始'.format(len(group)),
+                            'sub': '同じ日に重なったため 1 件にまとめました。「価格・販促」で個別に確認できます'})
+        return out
+
     def alerts(self, own_items, comp_items, cat_items):
         th, out = self.th, []
-        flags = (self.store.get('state/flags') or {}).get('items') or {}
+        flags_doc = self.store.get('state/flags') or {}
+        flags = flags_doc.get('items') or {}
+        # これまで監視していた競合。新しく監視に加えた競合は、すでに始まっているセールを
+        # 「開始」として通知しない（競合を入れ替えた日に、通知が一斉に出るのを防ぐ）。
+        # known を持たない古い形式の state からの初回も、同じ理由で通知しない。
+        known = set(flags_doc['known']) if 'known' in flags_doc else None
         new_flags = {}
         own_price = {i['parent']: i.get('price') for i in own_items}
         yen = lambda v: '{:,}円'.format(int(v))
@@ -850,10 +879,14 @@ class Run:
                 out.append({'sev': 'warn', 'type': 'promo', 'tab': 'price', 'acct': acct,
                             'text': '{} が {} クーポンを開始'.format(name, c['coupon']), 'sub': sub_own + 'の競合'})
             if c.get('deal'):
-                since = (flags.get(asin) or {}).get('dealSince') or self.iso
-                new_flags[asin] = {'dealSince': since}
-                if self._days_since(since) <= 1:
-                    out.append({'sev': 'warn', 'type': 'promo', 'tab': 'price', 'acct': acct,
+                old_flag = flags.get(asin) or {}
+                since = old_flag.get('dealSince') or self.iso
+                quiet = bool(old_flag.get('quiet')) if old_flag else (known is None or asin not in known)
+                if known is None:
+                    quiet = True
+                new_flags[asin] = {'dealSince': since, 'quiet': quiet}
+                if self._days_since(since) <= 1 and not quiet:
+                    out.append({'sev': 'warn', 'type': 'promo', 'tab': 'price', 'acct': acct, 'deal': True,
                                 'text': '{} が{}を開始'.format(name, c['deal']), 'sub': sub_own + 'の競合'})
             if c.get('stock') == 'out' and 0 < c.get('outDays', 0) <= th['outOfStockMaxDays']:
                 out.append({'sev': 'good', 'type': 'stock', 'tab': 'stock', 'acct': acct,
@@ -891,7 +924,8 @@ class Run:
         if self.new_own:
             out.append({'sev': 'info', 'type': 'setup', 'tab': 'setup', 'acct': None,
                         'text': '新しい自社商品が {}件 追加されました'.format(len(self.new_own)), 'sub': 'ダッシュボードの在庫データから自動で取り込みました'})
-        self.store.set('state/flags', {'updatedAt': self.now.isoformat(), 'items': new_flags})
+        out = self._collapse_deals(out)
+        self.store.set('state/flags', {'updatedAt': self.now.isoformat(), 'items': new_flags, 'known': sorted(by_comp)})
         out.sort(key=lambda a: SEV_ORDER[a['sev']])
         return out
 

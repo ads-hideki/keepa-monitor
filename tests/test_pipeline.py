@@ -106,7 +106,8 @@ def test_daily_builds_everything():
 
     ov = store.get('views/overview')
     texts = ' / '.join(a['text'] for a in ov['alerts'])
-    assert '値下げ' in texts and 'クーポンを開始' in texts and '在庫切れ 3日目' in texts and 'タイムセール' in texts
+    assert '値下げ' in texts and 'クーポンを開始' in texts and '在庫切れ 3日目' in texts
+    assert 'タイムセール' not in texts                   # 監視を始めた日に、すでに始まっていたセールは「開始」として通知しない
     assert '評価が 4.3 → 4.1' in texts and '月間販売が 400点以上 → 200点以上 に減少' in texts
     assert 'ランキング' not in texts                     # 順位の上下では通知しない（日々の動きが大きいため）
     own_items = {o['parent']: o for o in store.get('views/own')['items']}
@@ -445,3 +446,44 @@ def test_prices_job_accepts_own_items_saved_by_an_older_version():
         getattr(run2, job)()
         texts = ' / '.join(a['text'] + '｜' + (a.get('sub') or '') for a in store.get('views/overview')['alerts'])
         assert '評価が 4.3 → 4.1 に低下｜7日前との比較' in texts and 'ランキング' not in texts
+
+
+def test_deal_start_is_reported_only_for_competitors_already_watched():
+    deal = [{'badge': 'タイムセール', 'dealType': 'LIMITED_TIME_DEAL'}]
+    run, store, _, _, _ = make()
+    run.job_daily()                                       # 1 日目: B0SPR00002 はセール中だが、監視を始めた日なので通知しない
+    assert store.get('state/flags')['items']['B0SPR00002']['quiet'] is True
+
+    # 2 日目: これまで監視していた競合（B0CMP00002）がセールを開始 → 通知する
+    day2 = NOW + timedelta(days=1)
+    products, best, searches = world(day2)
+    products['B0CMP00002']['deals'] = deal
+    run2, _, _, _, _ = make(store=store, now=day2, http=FakeKeepaHttp(products, best, searches))
+    run2.job_daily()
+    texts = [a['text'] for a in store.get('views/overview')['alerts']]
+    assert any('PB甲' in t and 'タイムセールを開始' in t for t in texts)
+    assert not any('PB戊' in t and 'タイムセール' in t for t in texts)          # 1 日目から続いているセールは出さない
+
+    # 3 日目: 新しく監視に加えた競合がセール中 → 通知しない（競合を入れ替えた日に通知があふれないように）
+    day3 = NOW + timedelta(days=2)
+    products, best, searches = world(day3)
+    products['B0CMP00030']['deals'] = deal
+    s = store.get('settings/families') or {'items': {}}
+    s['items'].setdefault('B0PARENT01', {})['competitors'] = {'B0CMP00002': {'on': True}, 'B0CMP00030': {'on': True}}
+    store.set('settings/families', s)
+    run3, _, _, _, _ = make(store=store, now=day3, http=FakeKeepaHttp(products, best, searches))
+    run3.job_daily()
+    texts = [a['text'] for a in store.get('views/overview')['alerts']]
+    assert not any('PB30' in t for t in texts)
+    assert 'B0CMP00030' in store.get('state/flags')['known']
+
+
+def test_many_deal_starts_on_one_day_become_a_single_alert():
+    from collector.pipeline import Run
+    mk = lambda i, acct: {'sev': 'warn', 'type': 'promo', 'tab': 'price', 'acct': acct, 'deal': True, 'text': '商品{} がタイムセールを開始'.format(i), 'sub': ''}
+    few = Run._collapse_deals([mk(i, 'shop1') for i in range(5)])
+    assert len(few) == 5 and all('deal' not in a for a in few)
+    other = {'sev': 'warn', 'type': 'promo', 'tab': 'price', 'acct': 'shop1', 'text': 'クーポンを開始', 'sub': ''}
+    many = Run._collapse_deals([mk(i, 'shop1') for i in range(8)] + [mk(9, 'shop2'), other])
+    assert [a['text'] for a in many] == ['競合 8件がセールを開始', '商品9 がタイムセールを開始', 'クーポンを開始']
+    assert many[0]['n'] == 8 and many[0]['acct'] == 'shop1'

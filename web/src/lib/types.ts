@@ -10,6 +10,8 @@ export interface Alert {
   acct: string | null;
   text: string;
   sub?: string;
+  /** 複数の通知を 1 件にまとめたときの件数 */
+  n?: number;
 }
 
 export interface Overview {

@@ -18,7 +18,7 @@ export default function Overview({ db, acct, go }: { db: Db; acct: string; go: (
   const ov = db.overview;
   if (!ov) return <section className="card"><p className="empty">まだ取得結果がありません。最初の取得が終わると表示されます。</p></section>;
   const alerts = ov.alerts.filter(a => acct === 'all' || !a.acct || a.acct === acct);
-  const count = (t: string) => alerts.filter(a => a.type === t).length;
+  const count = (t: string) => alerts.filter(a => a.type === t).reduce((sum, a) => sum + (a.n ?? 1), 0);   // まとめた通知は件数ぶん数える
   const shown = all ? alerts : alerts.slice(0, LIMIT);
   const cap = (ov.tokens.rate || 25) * 60 * 24;
   const today = ov.tokens.today || 0;
