@@ -67,6 +67,16 @@ def mark_auto(items, limit=2):
         n += 1 if ok else 0
     return items
 
+def mark_picks(picks, limit=2):
+    """提案の中から、利用者が選ぶまで自動で監視するものに印を付ける。提案の順で、いま出品があるものの上位。"""
+    n = 0
+    for it in picks:
+        ok = it.get('price') is not None and n < limit
+        it['auto'] = ok
+        n += 1 if ok else 0
+    return picks
+
+
 class Run:
     def __init__(self, store, keepa, cfg, now=None, log=print, dash_fetch=None):
         self.store, self.keepa, self.cfg, self.log = store, keepa, cfg, log
@@ -103,6 +113,7 @@ class Run:
         self.candidates = self.store.list('candidates')
         for doc in self.candidates.values():
             mark_auto(doc.get('items') or [])
+            mark_picks(doc.get('picks') or [])
 
     # ------------------------------------------------------------------ 自社商品の自動追加
     def sync_own(self):
@@ -180,11 +191,12 @@ class Run:
 
     def own_status(self, it):
         th = self.th
-        if it.get('rating') is not None and it.get('rating7') is not None and it['rating7'] - it['rating'] >= th['ratingDrop'] - 1e-9:
+        if it.get('rating') is not None and it.get('rating30') is not None and it['rating30'] - it['rating'] >= th['ratingDrop'] - 1e-9:
             return {'sev': 'crit', 'label': '評価低下'}
-        # 順位は日々大きく動くので、直近3日の平均と1週間前の3日の平均で比べる
-        if it.get('rankNow3') and it.get('rankWeek3') and it['rankNow3'] >= it['rankWeek3'] * (1 + th['rankWorsePct'] / 100.0):
-            return {'sev': 'serious', 'label': 'ランキング急落'}
+        # ランキングは日々大きく動くので使わない。Amazon が表示する月間の購入数を、30日前の表示と比べる
+        before = it.get('sold30') or 0
+        if before >= th['soldMin'] and (it.get('sold') or 0) <= before * (1 - th['soldDropPct'] / 100.0):
+            return {'sev': 'serious', 'label': '販売数減少'}
         if it.get('changedAt') and self._days_since(it['changedAt']) <= th['pageChangeDays']:
             return {'sev': 'warn', 'label': 'ページ変更'}
         if it.get('oos'):
@@ -206,20 +218,26 @@ class Run:
             members = [self.own_products[a] for a in fam['asins'] if a in self.own_products]
             b = parse.brief(rep)
             rank_pts, rating_pts, rev_pts = parse.changes(rep, CSV_SALES), parse.changes(rep, CSV_RATING), parse.changes(rep, CSV_REVIEWS)
-            rating7 = parse.value_days_ago(rating_pts, 7, self.today)
-            rank_hist = parse.daily(rank_pts, 30, self.today)
+            days = int(self.th['compareDays'])
+            rating_old = parse.value_days_ago(rating_pts, days, self.today)
+            rank_long = parse.daily(rank_pts, days + 4, self.today)
+            rank_hist = rank_long[-30:]
             prices = [v for v in (parse.current(m, CSV_NEW) for m in members) if v is not None]
             oos = [m['asin'] for m in members if parse.current(m, CSV_NEW) is None and (self.own.get(m['asin']) or {}).get('qty', 0) > 0]
+            # 月間の購入数は色・サイズごとに表示されることがあるので、いちばん多い色・サイズの値で見る
+            sold_now = max((m.get('monthlySold') for m in members if isinstance(m.get('monthlySold'), int) and m['monthlySold'] > 0), default=None)
+            sold_old = [v for v in (parse.sold_at(m, self.now - timedelta(days=days)) for m in members) if v is not None]
             it = {
                 'parent': parent, 'acct': fam['account'], 'name': fam['name'], 'title': fam['title'], 'rep': fam['rep'],
                 'image': b['image'], 'nvar': len(fam['asins']), 'cat': (fam.get('cat') or {}).get('name'),
                 'price': b['price'], 'priceMin': min(prices) if prices else None, 'priceMax': max(prices) if prices else None,
                 'priceHist': parse.compress(parse.daily(parse.changes(rep, CSV_NEW), 90, self.today)),
-                'rank': b['rank'], 'rank7': parse.value_days_ago(rank_pts, 7, self.today),
-                'rankHist': rank_hist, 'rankNow3': _mean(rank_hist[-3:]), 'rankWeek3': _mean(rank_hist[-10:-7]),
-                'rating': b['rating'], 'rating7': (rating7 / 10.0) if rating7 is not None and rating7 >= 0 else None,
-                'reviews': b['reviews'], 'reviews7': parse.value_days_ago(rev_pts, 7, self.today),
-                'sold': b['sold'], 'coupon': b['coupon'], 'deal': b['deal'],
+                'cmpDays': days,
+                'rank': b['rank'], 'rankNow3': _mean(rank_long[-3:]), 'rank30': _mean(rank_long[:3]), 'rankHist': rank_hist,
+                'rating': b['rating'], 'rating30': (rating_old / 10.0) if rating_old is not None and rating_old >= 0 else None,
+                'reviews': b['reviews'], 'reviews30': parse.value_days_ago(rev_pts, days, self.today),
+                'sold': sold_now, 'sold30': max(sold_old) if sold_old else None,
+                'coupon': b['coupon'], 'deal': b['deal'],
                 'changedAt': fam.get('changedAt'), 'changeWhat': fam.get('changeWhat'), 'oos': len(oos),
             }
             it['status'] = self.own_status(it)
@@ -234,8 +252,8 @@ class Run:
         if comps:
             return [(a, bool(c.get('manual')), False) for a, c in sorted(comps.items()) if c and c.get('on')]
         cand = self.candidates.get(parent)
-        if cand:
-            return [(i['asin'], False, True) for i in cand.get('items') or [] if i.get('auto')]
+        if cand:                                      # 提案があれば提案の上位、なければ自動の候補の上位
+            return [(i['asin'], False, True) for i in (cand.get('picks') or cand.get('items') or []) if i.get('auto')]
         return []
 
     def competitors(self, days=HISTORY_DAYS, rating=True, previous=None):
@@ -414,11 +432,56 @@ class Run:
                 self.warnings.append('競合候補の作成を途中で止めました（残り {} 商品）。次回の実行で続きを作ります。'.format(len(todo) - built))
                 self.log('競合候補: 中断（{}）'.format(e))
                 break
+            prev = self.candidates.get(parent) or {}
+            if prev.get('picks'):                     # 候補を作り直しても、取り込んだ提案は残す
+                doc['picks'], doc['picksAt'] = prev['picks'], prev.get('picksAt') or ''
             self.store.set('candidates/{}'.format(parent), doc)
             self.candidates[parent] = doc
             built += 1
         self.log('競合候補: {} 商品分を作成（対象 {}）'.format(built, len(todo)))
         return built
+
+    def build_picks(self):
+        """画面から取り込んだ競合・ベンチマークの提案（settings/families の picks）に、商品名や価格を付けて
+        candidates/{親ASIN} の picks に保存する。提案が変わった商品だけ取得する。"""
+        own_all = set(self.own)
+        for f in self.families.values():
+            own_all.update(f['variations'])
+        todo = []
+        for parent in sorted(self.families):
+            s = self.s_fam.get(parent) or {}
+            picks = [x for x in (s.get('picks') or []) if isinstance(x, dict) and x.get('asin') and x['asin'] not in own_all]
+            if picks and (self.candidates.get(parent) or {}).get('picksAt') != (s.get('picksAt') or ''):
+                todo.append((parent, picks, s.get('picksAt') or ''))
+        if not todo:
+            return 0
+        need = sorted({x['asin'] for _, picks, _ in todo for x in picks if x['asin'] not in self._brief_cache})
+        try:
+            if need:
+                self._brief_cache.update(self.keepa.products(need, history=False, rating=True, label='競合の提案'))
+        except KeepaError as e:
+            self.warnings.append('競合の提案の取得を途中で止めました。次回の実行で続きを取得します。')
+            self.log('競合の提案: 中断（{}）'.format(e))
+            return 0
+        for parent, picks, stamp in todo:
+            fam = self.families[parent]
+            doc = self.candidates.get(parent) or {'updatedAt': self.now.isoformat(), 'kw': [], 'terms': [], 'cat': fam.get('cat'), 'pool': 0, 'items': []}
+            out, seen = [], set()
+            for x in picks:
+                a = x['asin']
+                if a in seen:
+                    continue
+                seen.add(a)
+                p = self._brief_cache.get(a)
+                b = parse.brief(p) if p else {}
+                out.append({'asin': a, 'title': (b.get('title') or '')[:80], 'brand': b.get('brand') or '', 'image': b.get('image'),
+                            'price': b.get('price'), 'rating': b.get('rating'), 'reviews': b.get('reviews'), 'sold': b.get('sold'),
+                            'why': str(x.get('why') or '')[:120], 'missing': not p, 'auto': False})
+            doc['picks'], doc['picksAt'] = mark_picks(out), stamp
+            self.store.set('candidates/{}'.format(parent), doc)
+            self.candidates[parent] = doc
+        self.log('競合の提案: {} 商品分を反映（提案 {} 件）'.format(len(todo), sum(len(p) for _, p, _ in todo)))
+        return len(todo)
 
     def _candidates_for(self, parent, fam, own_all, own_brands):
         ranking, cat = self.ranking_for(fam)
@@ -797,12 +860,15 @@ class Run:
                             'text': '{} が在庫切れ {}日目'.format(name, c['outDays']), 'sub': sub_own + 'の広告強化を検討できます'})
         for it in own_items:
             st, label, acct = it['status'], '「{}」'.format(it['name']), it['acct']
+            cmp_text = '{}日前との比較'.format(it.get('cmpDays') or th['compareDays'])
             if st['label'] == '評価低下':
                 out.append({'sev': 'crit', 'type': 'catalog', 'tab': 'catalog', 'acct': acct,
-                            'text': '{}の評価が {:.1f} → {:.1f} に低下'.format(label, it['rating7'], it['rating']), 'sub': '7日前との比較'})
-            elif st['label'] == 'ランキング急落':
+                            'text': '{}の評価が {:.1f} → {:.1f} に低下'.format(label, it['rating30'], it['rating']), 'sub': cmp_text})
+            elif st['label'] == '販売数減少':
+                now_text = '{:,}点以上'.format(it['sold']) if it.get('sold') else '表示なし（50点未満）'
                 out.append({'sev': 'serious', 'type': 'catalog', 'tab': 'catalog', 'acct': acct,
-                            'text': '{}のランキングが {:,}位 → {:,}位 に下落'.format(label, it['rankWeek3'], it['rankNow3']), 'sub': '直近3日の平均と、1週間前の3日の平均との比較'})
+                            'text': '{}の月間販売が {:,}点以上 → {} に減少'.format(label, it['sold30'], now_text),
+                            'sub': cmp_text + '（Amazon の「過去1か月で○点以上購入」の表示）'})
             if it.get('changedAt') and self._days_since(it['changedAt']) <= th['pageChangeDays']:
                 out.append({'sev': 'warn', 'type': 'catalog', 'tab': 'catalog', 'acct': acct,
                             'text': '{}の{}が変更されました'.format(label, it.get('changeWhat') or '商品ページ'),
@@ -841,7 +907,7 @@ class Run:
             items.append({'parent': parent, 'acct': fam['account'], 'name': fam['name'], 'title': fam['title'], 'rep': fam['rep'],
                           'nvar': len(fam['asins']), 'isNew': self._days_since(fam.get('firstSeen')) <= 7,
                           'source': 'user' if s.get('competitors') else ('auto' if eff else 'none'),
-                          'competitors': comps, 'hasCandidates': bool(cand),
+                          'competitors': comps, 'hasCandidates': bool(cand), 'picks': len((cand or {}).get('picks') or []),
                           'kw': (cand or {}).get('kw') or [], 'terms': (cand or {}).get('terms') or []})
         items.sort(key=lambda x: (0 if x['source'] == 'none' else 1 if x['source'] == 'auto' else 2, x['acct'] or '', x['name']))
         return items
@@ -883,6 +949,7 @@ class Run:
         self.sync_own()
         self.own_catalog()
         self.load_candidates()
+        self.build_picks()
         self.competitors(rating=True)
         self.categories()
         self.write_views('daily')                         # ここまでで画面は最新になる
@@ -957,7 +1024,7 @@ class Run:
         if not self.families:
             raise RuntimeError('自社カタログがまだありません。先に daily を実行してください')
         self.own_products = {}
-        built = self.build_candidates(0)
+        built = self.build_candidates(0) + self.build_picks()
         previous = (self.store.get('views/comps') or {}).get('items') or []
         self.competitors(rating=True, previous=previous)
         own_items = (self.store.get('views/own') or {}).get('items') or []

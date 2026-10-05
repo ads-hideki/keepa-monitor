@@ -36,14 +36,19 @@ export interface OwnItem {
   priceMin: number | null;
   priceMax: number | null;
   priceHist: (number | null)[];
+  /** 比較に使う日数（30）。古いデータには無い */
+  cmpDays?: number;
   rank: number | null;
-  rank7: number | null;
+  rank30?: number | null;
+  rankNow3?: number | null;
   rankHist: (number | null)[];
   rating: number | null;
-  rating7: number | null;
+  rating30?: number | null;
   reviews: number | null;
-  reviews7: number | null;
+  reviews30?: number | null;
+  /** Amazon が表示する「過去1か月で○点以上購入」。色・サイズのうち、いちばん多い値 */
   sold: number | null;
+  sold30?: number | null;
   coupon: string | null;
   deal: string | null;
   changedAt: string | null;
@@ -233,6 +238,8 @@ export interface SetupItem {
   source: 'user' | 'auto' | 'none';
   competitors: SetupComp[];
   hasCandidates: boolean;
+  /** 取り込み済みの提案の件数。古いデータには無い */
+  picks?: number;
   kw: string[];
   terms: string[];
 }
@@ -252,6 +259,21 @@ export interface Candidate {
   why: string;
   auto: boolean;
 }
+/** 競合・ベンチマークの提案 1 件 */
+export interface Pick {
+  asin: string;
+  title: string;
+  brand: string;
+  image: string | null;
+  price: number | null;
+  rating: number | null;
+  reviews: number | null;
+  sold: number | null;
+  why: string;
+  auto: boolean;
+  /** 商品の情報をまだ取得できていない */
+  missing?: boolean;
+}
 export interface CandidateDoc {
   updatedAt: string;
   kw: string[];
@@ -259,6 +281,9 @@ export interface CandidateDoc {
   cat: { id: number; name: string } | null;
   pool: number;
   items: Candidate[];
+  /** 商品内容を見て選んだ提案。無い商品は、items から自動で絞った候補を表示する */
+  picks?: Pick[];
+  picksAt?: string;
 }
 
 export interface CompSetting {
@@ -271,6 +296,9 @@ export interface FamilySetting {
   kw?: string[];
   terms?: string[];
   regenAt?: string;
+  /** 取り込んだ競合・ベンチマークの提案 */
+  picks?: { asin: string; why: string }[];
+  picksAt?: string;
 }
 
 export interface Db {

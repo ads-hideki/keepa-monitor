@@ -34,8 +34,10 @@ class Config:
 
 # 通知の基準（settings/thresholds で上書きできる）
 DEFAULT_THRESHOLDS = {
-    'ratingDrop': 0.2,        # 7日前より評価がこれ以上下がったら通知
-    'rankWorsePct': 50,       # 直近3日の平均順位が、1週間前の3日平均よりこの%以上悪化したら通知
+    'compareDays': 30,        # 自社商品の変化を、何日前と比べるか
+    'ratingDrop': 0.2,        # 評価がこれ以上下がったら通知
+    'soldDropPct': 30,        # 月間販売（Amazon の「過去1か月で○点以上購入」）がこの%以上減ったら通知
+    'soldMin': 100,           # 比べる時点の月間販売がこの点数以上の商品だけ、販売数の減少を通知する
     'pageChangeDays': 7,      # ページ変更の通知を出し続ける日数
     'outOfStockMaxDays': 14,  # 競合の在庫切れを「好機」として出す日数の上限
     'maxOffersForPb': 2,      # 出品者がこの数以下なら PB らしいとみなす

@@ -16,10 +16,10 @@ TREE_B = ((2, 'ルート2'), (22, 'スプレー'))
 def world(now=NOW):
     fam = ['B0OWN00001', 'B0OWN00002', 'B0OWN00003']
     p = {}
-    # 自社: 3色展開の商品（順位が 1000 → 1500 に悪化）と、単品（評価が 4.3 → 4.1 に低下）
+    # 自社: 3色展開の商品（月間の購入数の表示が 400 → 200 に減少）と、単品（評価が 4.3 → 4.1 に低下）
     for a in fam:
         p[a] = product(a, '自社ブランド 低反発 クッション 【説明】 椅子用 ' + a[-1], brand='自社ブランド', parent='B0PARENT01', variations=fam,
-                       price=((400, 2800),), rank=((400, 1000), (3, 1600)), tree=TREE_A, now=now)
+                       price=((400, 2800),), rank=((400, 1000), (3, 1600)), sold=((60, 400), (10, 200)), tree=TREE_A, now=now)
     p['B0OWN00004'] = product('B0OWN00004', '自社ブランド カビ取り スプレー 強力', brand='自社ブランド', price=((400, 1480),),
                               rating=((400, 43), (2, 41)), tree=TREE_B, coupon=[-5, 0], now=now)
     # カテゴリ A の商品
@@ -107,7 +107,11 @@ def test_daily_builds_everything():
     ov = store.get('views/overview')
     texts = ' / '.join(a['text'] for a in ov['alerts'])
     assert '値下げ' in texts and 'クーポンを開始' in texts and '在庫切れ 3日目' in texts and 'タイムセール' in texts
-    assert '評価が 4.3 → 4.1' in texts and 'ランキングが 1,000位 → 1,600位' in texts
+    assert '評価が 4.3 → 4.1' in texts and '月間販売が 400点以上 → 200点以上 に減少' in texts
+    assert 'ランキング' not in texts                     # 順位の上下では通知しない（日々の動きが大きいため）
+    own_items = {o['parent']: o for o in store.get('views/own')['items']}
+    assert own_items['B0PARENT01']['status']['label'] == '販売数減少' and own_items['B0PARENT01']['sold30'] == 400
+    assert own_items['B0OWN00004']['rating30'] == 4.3 and own_items['B0OWN00004']['cmpDays'] == 30
     assert [a['sev'] for a in ov['alerts']] == sorted([a['sev'] for a in ov['alerts']], key=['crit', 'serious', 'warn', 'good', 'info'].index)
     assert ov['monitor'] == {'families': 2, 'asins': 4, 'competitors': 5, 'unset': 0}
     assert ov['tokens']['spent'] == run.keepa.spent > 0
@@ -118,7 +122,7 @@ def test_daily_builds_everything():
     assert own_track['hist'][-1] == 5
 
     sales = store.get('views/sales')
-    assert len(sales['months']) == 24 and sales['own']['B0PARENT01'][-1] == 400
+    assert len(sales['months']) == 24 and sales['own']['B0PARENT01'][-1] == 200
     assert store.get('views/research') is not None
     # 公開リポジトリのログに、商品名・ASIN・キーを出さない
     joined = '\n'.join(str(x) for x in logs)
@@ -381,3 +385,43 @@ def test_market_verdict_lists_what_misses_the_rules():
     assert Run.judge(dict(good, sizePeak=150000000, over=9, medReviews=1400)) == ['市場が大きすぎる', '大型商品が多い', 'レビューが多い']
     assert Run.judge(dict(good, sizePeak=900000, inBand=1, newWinners=0)) == ['市場が小さい', '中規模の商品が少ない', '新しい成功例がない']
     assert Run.judge(dict(good, amazon=6, medReviews=None)) == ['Amazon本体の販売が多い']
+
+
+def test_imported_proposals_become_the_competitor_list():
+    run, store, _, _, _ = make()
+    run.job_daily()
+    assert [c['asin'] for c in store.get('views/comps')['items'] if c['parent'] == 'B0PARENT01'] == ['B0CMP00002', 'B0CMP00003']
+    # 画面から提案を取り込む（候補に無い商品、出品がなくなった商品、自社商品を含む）
+    products, best, searches = world()
+    products['B0BENCH001'] = product('B0BENCH001', 'ベンチマーク クッション 売れ筋', brand='PB先行', sold=((20, 2000),), tree=TREE_A)
+    products['B0CMP00020'] = product('B0CMP00020', 'PB20 クッション 丸型', brand='PB20', price=((400, 3000), (5, -1)), tree=TREE_A)
+    store.set('settings/families', {'items': {'B0PARENT01': {'picksAt': '2026-10-02T09:00:00', 'picks': [
+        {'asin': 'B0CMP00020', 'why': '競合: 同じ形'}, {'asin': 'B0BENCH001', 'why': 'ベンチマーク: この種類でいちばん売れている'},
+        {'asin': 'B0OWN00001', 'why': '自社商品は入れない'}, {'asin': 'B0CMP00007', 'why': '競合: 価格が近い'},
+        {'asin': 'B0NOTFOUND', 'why': '取得できない商品'}, {'asin': 'B0CMP00003', 'why': '競合'}]}}})
+    http = FakeKeepaHttp(products, best, searches)
+    run2, _, _, logs, _ = make(store=store, http=http)
+    run2.job_candidates()
+    doc = store.get('candidates/B0PARENT01')
+    assert [p['asin'] for p in doc['picks']] == ['B0CMP00020', 'B0BENCH001', 'B0CMP00007', 'B0NOTFOUND', 'B0CMP00003']
+    by = {p['asin']: p for p in doc['picks']}
+    assert by['B0BENCH001']['title'].startswith('ベンチマーク') and by['B0BENCH001']['sold'] == 2000 and by['B0BENCH001']['why'].startswith('ベンチマーク')
+    assert by['B0NOTFOUND']['missing'] and not by['B0BENCH001']['missing']
+    assert [p['asin'] for p in doc['picks'] if p['auto']] == ['B0BENCH001', 'B0CMP00007']     # 出品のない商品は自動では選ばない
+    assert doc['items'] and doc['picksAt'] == '2026-10-02T09:00:00'                          # もとの候補も残す（市場の評価で使う）
+    watched = [c['asin'] for c in store.get('views/comps')['items'] if c['parent'] == 'B0PARENT01']
+    assert watched == ['B0BENCH001', 'B0CMP00007']                                           # 選ぶまでは提案の上位 2 件を監視
+    assert any('競合の提案: 1 商品分' in str(x) for x in logs)
+    setup = {i['parent']: i for i in store.get('views/setup')['items']}
+    assert setup['B0PARENT01']['picks'] == 5 and setup['B0OWN00004']['picks'] == 0
+
+    # 同じ提案をもう一度取りに行かない。利用者が選んだら、その選択を使う。候補を作り直しても提案は残る
+    s = store.get('settings/families')
+    s['items']['B0PARENT01'].update({'competitors': {'B0CMP00003': {'on': True}}, 'regenAt': '2099-01-01T00:00:00', 'kw': ['クッション'], 'terms': ['低反発 クッション']})
+    store.set('settings/families', s)
+    http3 = FakeKeepaHttp(products, best, searches)
+    run3, _, _, logs3, _ = make(store=store, http=http3)
+    run3.job_candidates()
+    assert not any('競合の提案' in str(x) for x in logs3)
+    assert [c['asin'] for c in store.get('views/comps')['items'] if c['parent'] == 'B0PARENT01'] == ['B0CMP00003']
+    assert len(store.get('candidates/B0PARENT01')['picks']) == 5

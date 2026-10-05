@@ -209,3 +209,7 @@ button:disabled,input:disabled{opacity:.55;cursor:default}
 .tbl tr.sub-r .tbl td,.tbl tr.sub-r .tbl th{background:transparent}
 .tbl td.vd{min-width:136px}
 .tbl td.name .pills{margin-top:3px}
+.importform{align-items:flex-start;margin-top:8px}
+.importform .fld.wide{flex:1 1 420px}
+.importform textarea{width:100%;min-height:84px;padding:8px 10px;border:1px solid var(--axis);border-radius:8px;background:var(--surface,transparent);color:var(--ink);font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;resize:vertical}
+.importform input[type=file]{font-size:13px;max-width:100%;width:auto;border:0;padding:0;background:transparent}

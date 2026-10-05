@@ -16,6 +16,8 @@ export interface Source {
   /** 競合の選択を保存する。値が null の ASIN は削除する。 */
   saveCompetitors(parent: string, changes: Record<string, CompSetting | null>): Promise<void>;
   saveKeywords(parent: string, kw: string[], terms: string[]): Promise<void>;
+  /** 競合・ベンチマークの提案を取り込む。{親ASIN: [{asin, why}]}。戻り値は取り込みの時刻。 */
+  savePicks(picks: Record<string, { asin: string; why: string }[]>): Promise<string>;
   saveBrands(excluded: string[]): Promise<void>;
   saveResearch(params: ResearchParams): Promise<void>;
 }
@@ -68,6 +70,11 @@ function mockSource(): Source {
     async saveKeywords(parent, kw, terms) {
       Object.assign(family(await load(), parent), { kw, terms, regenAt: new Date().toISOString() });
     },
+    async savePicks(picks) {
+      const d = await load(), at = new Date().toISOString();
+      for (const [parent, list] of Object.entries(picks)) Object.assign(family(d, parent), { picks: list, picksAt: at });
+      return at;
+    },
     async saveBrands(excluded) { (await load())['settings/brands'] = { excluded }; },
     async saveResearch(params) { (await load())['settings/research'] = params; },
   };
@@ -79,7 +86,7 @@ function firebaseSource(): Source {
     // ビルド時に Firebase の設定が渡されていない。画面を真っ白にせず、理由を表示する
     const fail = async () => { throw new Error('Firebase の設定がありません。ビルド時の環境変数を確認してください。'); };
     return { watchUser(cb) { cb(null); return () => {}; }, login: fail, logout: async () => {}, loadAll: fail as never, candidates: fail as never,
-      saveCompetitors: fail, saveKeywords: fail, saveBrands: fail, saveResearch: fail };
+      saveCompetitors: fail, saveKeywords: fail, savePicks: fail as never, saveBrands: fail, saveResearch: fail };
   }
   const app = initializeApp({
     apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -113,6 +120,13 @@ function firebaseSource(): Source {
     },
     async saveKeywords(parent, kw, terms) {
       await setDoc(ref('settings/families'), { items: { [parent]: { kw, terms, regenAt: new Date().toISOString() } } }, { merge: true });
+    },
+    async savePicks(picks) {
+      const at = new Date().toISOString();
+      const items: Record<string, unknown> = {};
+      for (const [parent, list] of Object.entries(picks)) items[parent] = { picks: list, picksAt: at };
+      await setDoc(ref('settings/families'), { items }, { merge: true });
+      return at;
     },
     async saveBrands(excluded) { await setDoc(ref('settings/brands'), { excluded }); },
     async saveResearch(params) { await setDoc(ref('settings/research'), params); },

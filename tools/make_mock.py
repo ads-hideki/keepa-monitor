@@ -171,6 +171,16 @@ def main():
         http = FakeKeepaHttp(products, best, searches, finder=finder)
         keepa = Keepa('TESTKEY', http=http, sleep=http.refill, clock=lambda: 0, log=lambda s: None, max_runtime_s=10 ** 9)
         Run(store, keepa, MockCfg(), now=now, log=lambda s: None, dash_fetch=dashboard_fetch(docs)).job_daily()
+    # 競合・ベンチマークの提案を取り込んだ商品（2 商品ぶん。残りは自動の候補を表示する）
+    fams = store.get('settings/families')
+    reasons = ['競合: 同じ形・同じ価格帯の PB', '競合: 価格が近く、レビュー数も同じくらい', 'ベンチマーク: この種類でいちばん売れている PB',
+               '競合: 素材が同じで、色展開も近い', 'ベンチマーク: レビューが少ないのに販売が伸びている', '競合: セット内容が近い']
+    for parent in sorted(store.get('state/families')['items'])[:2]:
+        rec = [i['asin'] for i in store.get('candidates/' + parent)['items'] if i['group'] == 'rec'][:6]
+        fams['items'].setdefault(parent, {}).update({'picksAt': now.isoformat(), 'picks': [{'asin': a, 'why': reasons[k]} for k, a in enumerate(rec)]})
+    store.set('settings/families', fams)
+    keepa = Keepa('TESTKEY', http=FakeKeepaHttp(products, best, searches, finder=finder), sleep=lambda s: None, clock=lambda: 0, log=lambda s: None, max_runtime_s=10 ** 9)
+    Run(store, keepa, MockCfg(), now=now, log=lambda s: None, dash_fetch=dashboard_fetch(docs)).job_candidates()
     keepa = Keepa('TESTKEY', http=FakeKeepaHttp(products, best, searches, finder=finder), sleep=lambda s: None, clock=lambda: 0, log=lambda s: None, max_runtime_s=10 ** 9)
     Run(store, keepa, MockCfg(), now=now, log=lambda s: None, dash_fetch=dashboard_fetch(docs)).job_markets()
     keep = {p: v for p, v in store.docs.items() if p.split('/')[0] in ('views', 'candidates', 'settings')}

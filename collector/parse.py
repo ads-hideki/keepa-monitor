@@ -157,6 +157,19 @@ def monthly_sold(p):
     return out
 
 
+def sold_at(p, when):
+    """when の時点で表示されていた「過去1か月で○点以上購入」。表示がなかった時期は 0、記録より前は None。"""
+    h = p.get('monthlySoldHistory') or []
+    val = None
+    for i in range(0, len(h) - 1, 2):
+        if to_dt(h[i]) <= when:
+            v = h[i + 1]
+            val = v if isinstance(v, int) and v > 0 else 0
+        else:
+            break
+    return val
+
+
 def sold_estimate(p):
     """いまの月間販売数の目安を (点数, 出どころ) で返す。
 

@@ -144,3 +144,11 @@ def test_average_price_reads_90_day_average():
     avg[1] = 2480
     assert parse.average_price({'stats': {'avg90': avg}}) == 2480
     assert parse.average_price({'stats': {'avg90': [-1, -1]}}) is None
+
+
+def test_sold_at_reads_the_badge_shown_at_that_time():
+    p = product('B0X', 't', sold=((60, 400), (40, -1), (10, 200)))
+    assert parse.sold_at(p, NOW - timedelta(days=50)) == 400
+    assert parse.sold_at(p, NOW - timedelta(days=30)) == 0          # その時点では表示がなかった
+    assert parse.sold_at(p, NOW) == 200
+    assert parse.sold_at(p, NOW - timedelta(days=90)) is None       # 記録が始まる前
