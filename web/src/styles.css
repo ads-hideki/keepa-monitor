@@ -201,3 +201,7 @@ button:disabled,input:disabled{opacity:.55;cursor:default}
 .err{color:var(--ink);background:color-mix(in srgb,var(--crit) 12%,var(--surface));border:1px solid color-mix(in srgb,var(--crit) 40%,var(--surface));border-radius:8px;padding:8px 10px;font-size:13px}
 .center{min-height:60vh;display:flex;align-items:center;justify-content:center;color:var(--muted)}
 
+
+.roots{border:1px solid var(--line);border-radius:8px;padding:8px 12px 10px;margin:0;flex-basis:100%;min-width:0}
+.roots legend{font-size:12px;color:var(--ink2);padding:0 4px}
+.roots-l{display:flex;flex-wrap:wrap;gap:4px 16px}

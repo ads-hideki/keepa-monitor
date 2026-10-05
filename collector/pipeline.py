@@ -32,6 +32,7 @@ def _mean(values):
 DAILY_FROM = (2, 0)
 PRICE_SLOTS = ((10, 0), (14, 0), (19, 0))
 MAX_DAILY_TRIES = 3
+RESEARCH_POOL = 300          # リサーチで候補として取る件数の上限
 
 
 def _parse_time(iso):
@@ -486,44 +487,67 @@ class Run:
 
     # ------------------------------------------------------------------ 新商品リサーチ
     def research(self):
+        """Amazon 全体から、条件に合う商品を月間販売の多い順に抽出する。
+
+        カテゴリでは絞らない（売れていて勝負できるものなら何でも対象）。本・音楽・ゲームなど、
+        作って売る対象にならない大カテゴリだけを外す（settings/research の excludeRoots）。
+        """
         prm = self.research_params
-        # 大カテゴリでは範囲が広すぎて関係の薄い商品ばかりになるため、自社商品と同じ細かいカテゴリに絞る
-        roots = sorted({f['cat']['id'] for f in self.families.values() if f.get('cat') and f['cat'].get('id')})
-        view = {'updatedAt': self._wall().isoformat(), 'params': prm, 'items': [], 'error': None, 'cats': len(roots)}
-        if not roots:
-            view['error'] = '自社商品のカテゴリがまだ取得できていません'
-            return view
+        exclude = [x for x in (prm.get('excludeRoots') or []) if x]
+        view = {'updatedAt': self._wall().isoformat(), 'params': prm, 'items': [], 'error': None, 'roots': [], 'sort': 'sold'}
         own_brands = {f['brand'].strip().lower() for f in self.families.values() if f.get('brand')}
+        own_asins = set(self.own) | {a for f in self.families.values() for a in f['variations']}
+        selection = {'current_NEW_gte': prm['priceMin'], 'current_NEW_lte': prm['priceMax'],
+                     'monthlySold_gte': prm['soldMin'], 'current_COUNT_REVIEWS_lte': prm['reviewsMax'],
+                     'current_SALES_gte': 1, 'current_SALES_lte': prm['rankMax'],
+                     'perPage': RESEARCH_POOL, 'page': 0, 'sort': [['monthlySold', 'desc']]}
         try:
-            selection = {'categories_include': roots, 'current_NEW_gte': prm['priceMin'], 'current_NEW_lte': prm['priceMax'],
-                         'monthlySold_gte': prm['soldMin'], 'current_COUNT_REVIEWS_lte': prm['reviewsMax'],
-                         'current_SALES_gte': 1, 'current_SALES_lte': prm['rankMax'],
-                         'perPage': 100, 'page': 0, 'sort': [['current_SALES', 'asc']]}
-            asins, total = self.keepa.finder(selection)
-            prods = self.keepa.products(asins[:100], history=False, rating=True, label='リサーチ（商品）')
+            try:
+                asins, total = self.keepa.finder(selection)
+            except KeepaError:                       # 販売数での並べ替えが使えない場合は、ランキング順で取り直す
+                view['sort'] = 'rank'
+                asins, total = self.keepa.finder(dict(selection, sort=[['current_SALES', 'asc']]))
         except KeepaError as e:
             view['error'] = '取得に失敗しました: {}'.format(e)
             self.warnings.append('新商品リサーチの取得に失敗しました。')
             return view
-        seen = set()
-        for a in asins:
-            p = prods.get(a)
-            if not p:
-                continue
-            b = parse.brief(p)
-            if b['parent'] in seen or b['brand'].strip().lower() in own_brands or b['brand'].strip().lower() in self.excluded_brands:
-                continue
-            if b['amazonSells'] or (b['offers'] is not None and b['offers'] > self.th['maxOffersForPb']):
-                continue
-            if (b['reviews'] or 0) > prm['reviewsMax'] or (b['rank'] or 10 ** 9) > prm['rankMax']:
-                continue
-            seen.add(b['parent'])
-            b['listed'] = parse.to_date(p.get('listedSince'))
-            b['title'] = b['title'][:80]
-            view['items'].append(b)
+        asins = [a for a in asins if a not in own_asins][:RESEARCH_POOL]
+        seen, roots = set(), set()
+        for i in range(0, len(asins), 100):          # 必要な件数が集まるまで、100 件ずつ詳細を取る
             if len(view['items']) >= prm['limit']:
                 break
+            try:
+                prods = self.keepa.products(asins[i:i + 100], history=False, rating=True, label='リサーチ（商品）')
+            except KeepaError as e:
+                view['error'] = None if view['items'] else '取得に失敗しました: {}'.format(e)
+                self.warnings.append('新商品リサーチの取得を途中で止めました。')
+                break
+            for a in asins[i:i + 100]:
+                p = prods.get(a)
+                if not p:
+                    continue
+                b = parse.brief(p)
+                tree = p.get('categoryTree') or []
+                root = (tree[0].get('name') or '') if tree else ''
+                if root:
+                    roots.add(root)
+                if any(root == x or (len(x) > 1 and x in root) for x in exclude):
+                    continue
+                if b['parent'] in seen or b['brand'].strip().lower() in own_brands or b['brand'].strip().lower() in self.excluded_brands:
+                    continue
+                if b['amazonSells'] or (b['offers'] is not None and b['offers'] > self.th['maxOffersForPb']):
+                    continue
+                if (b['reviews'] or 0) > prm['reviewsMax'] or (b['rank'] or 10 ** 9) > prm['rankMax']:
+                    continue
+                seen.add(b['parent'])
+                b['listed'] = parse.to_date(p.get('listedSince'))
+                b['title'] = b['title'][:80]
+                b['root'] = root
+                view['items'].append(b)
+                if len(view['items']) >= prm['limit']:
+                    break
         view['matched'] = total
+        view['roots'] = sorted(roots)
         self.log('新商品リサーチ: {} 件'.format(len(view['items'])))
         return view
 

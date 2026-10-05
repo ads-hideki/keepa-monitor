@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """テスト用の代用品。商品名や ASIN はすべて架空。"""
+import json
 import urllib.parse
 from datetime import datetime, timedelta
 
@@ -47,7 +48,7 @@ class FakeKeepaHttp:
     def __init__(self, products, bestsellers=None, searches=None, tokens=1500, rate=25, finder=None):
         self.products, self.bestsellers, self.searches = products, bestsellers or {}, searches or {}
         self.tokens, self.rate, self.finder = tokens, rate, finder or []
-        self.requests = []
+        self.requests, self.bodies = [], []
         self.force_429 = 0
 
     def refill(self, seconds):
@@ -60,6 +61,8 @@ class FakeKeepaHttp:
         path = u.path.strip('/')
         assert q.get('key') == 'TESTKEY'
         self.requests.append((path, {k: v for k, v in q.items() if k != 'key'}))
+        if body is not None:
+            self.bodies.append((path, json.loads(body) if isinstance(body, (str, bytes)) else body))
 
         def env(used, **extra):
             self.tokens -= used

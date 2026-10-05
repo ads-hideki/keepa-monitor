@@ -285,3 +285,24 @@ def test_one_alert_per_competitor_even_when_watched_by_several_products():
     comp_types = ('drop', 'promo', 'stock')
     assert sum(a['type'] in comp_types for a in alerts) == sum(a['type'] in comp_types for a in base)
     assert any('ほか1商品' in a['sub'] for a in alerts if a['type'] in comp_types)
+
+
+def test_research_searches_all_categories_and_drops_excluded_roots():
+    products, best, searches = world()
+    products['B0RSCBOOK1'] = product('B0RSCBOOK1', '架空の本', brand='出版社', tree=((9, '本'), (91, '実用書')))
+    products['B0RSCPET01'] = product('B0RSCPET01', '猫用 食器', brand='PBペット', tree=((8, 'ペット用品'), (81, '食器')))
+    products['B0RSCGAME1'] = product('B0RSCGAME1', 'ゲームソフト', brand='会社', tree=((7, 'TVゲーム'), (71, 'ソフト')))
+    http = FakeKeepaHttp(products, best, searches, finder=['B0RSCBOOK1', 'B0OWN00004', 'B0RSCPET01', 'B0RSCGAME1', 'B0CMP00006'])
+    run, store, _, _, _ = make(http=http)
+    run.job_daily()
+    view = store.get('views/research')
+    assert [i['asin'] for i in view['items']] == ['B0RSCPET01', 'B0CMP00006']        # 本とゲームは外れ、自社商品も出ない
+    assert view['items'][0]['root'] == 'ペット用品' and view['sort'] == 'sold'
+    assert {'本', 'ペット用品', 'TVゲーム'} <= set(view['roots'])                      # 画面の選択肢に使う
+    body = [b for path, b in http.bodies if path == 'query'][0]
+    assert 'rootCategory' not in body and 'categories_include' not in body          # カテゴリでは絞らない
+
+    store.set('settings/research', {'excludeRoots': ['ペット用品']})                 # 画面で外す対象を変えた場合
+    run2, _, _, _, _ = make(store=store, http=FakeKeepaHttp(products, best, searches, finder=list(http.finder)))
+    run2.job_research()
+    assert [i['asin'] for i in store.get('views/research')['items']] == ['B0RSCBOOK1', 'B0RSCGAME1', 'B0CMP00006']

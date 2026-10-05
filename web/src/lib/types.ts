@@ -125,6 +125,8 @@ export interface ResearchParams {
   reviewsMax: number;
   soldMin: number;
   limit: number;
+  /** 対象から外す大カテゴリの名前。1 文字は完全一致、2 文字以上は「含む」で判定 */
+  excludeRoots?: string[];
 }
 export interface ResearchItem {
   asin: string;
@@ -137,6 +139,7 @@ export interface ResearchItem {
   sold: number | null;
   image: string | null;
   cat: { id: number; name: string } | null;
+  root?: string;
   listed: string | null;
 }
 export interface Research {
@@ -145,6 +148,9 @@ export interface Research {
   items: ResearchItem[];
   error: string | null;
   matched?: number | null;
+  /** 取得した候補に含まれていた大カテゴリの名前 */
+  roots?: string[];
+  sort?: 'sold' | 'rank';
 }
 
 export interface SetupComp {

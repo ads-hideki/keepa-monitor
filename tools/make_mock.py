@@ -143,6 +143,12 @@ def world(now):
                               brand=PB[k % 12], tree=((1, 'ホーム&キッチン'), (90 + k, 'その他')), now=now,
                               **history(now, 9000 + k, 1800 + k * 260, 1500 + k * 600, 15 + k * 9, sold=300 + k * 60))
         finder.append(a)
+    for k, (root, leaf, title) in enumerate([('本', '実用書', '架空出版 片づけの教科書'), ('ペット用品', '食器', 'こはる 猫用 食器 傾斜つき'),
+                                              ('スポーツ&アウトドア', 'ヨガマット', 'みのり ヨガマット 厚手')]):
+        a = 'B0RSC9{:04d}'.format(k)
+        products[a] = product(a, title, brand=title.split(' ')[0], tree=((50 + k, root), (190 + k, leaf)), now=now,
+                              **history(now, 800 + k * 300, 1900 + k * 400, 1200 + k * 500, 20 + k * 15, sold=700 - k * 100))
+        finder.insert(k * 3, a)
     for p in products.values():
         p['images'] = []            # 架空の商品なので画像は持たせない
     return products, best, searches, docs, finder
