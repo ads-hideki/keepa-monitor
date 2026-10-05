@@ -189,7 +189,7 @@ export interface MarketItem {
   name: string;
   path: string[];
   kind: 'own' | 'compare' | 'found';
-  /** 市場の決め方。category = 細かいカテゴリの売れ筋、keyword = 商品名にキーワードを含む商品 */
+  /** 市場の決め方。category = 細かいカテゴリの売れ筋、keyword = 競合の提案（なければ商品名にキーワードを含む商品）。keyword のときは path[0] に集計方法の名前が入る */
   by?: 'category' | 'keyword';
   ownNames: string[];
   n: number;

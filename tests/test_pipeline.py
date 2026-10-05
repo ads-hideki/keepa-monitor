@@ -379,6 +379,47 @@ def test_markets_use_keywords_when_the_category_is_about_something_else():
     assert any('ランキングから推定 1' in line for line in logs)
 
 
+def test_markets_use_the_proposals_when_the_category_is_about_something_else():
+    products, best, searches = world()
+    others = ['B0OTH{:05d}'.format(i) for i in range(1, 25)]
+    for i, a in enumerate(others):
+        products[a] = product(a, '別ブランド{} スマホ ケース'.format(i), brand='OTH{}'.format(i), tree=TREE_B)
+    best[22] = others[:4] + ['B0OWN00004'] + others[4:]
+    # 名前にキーワードを含まないが、内容を見て競合・ベンチマークとした商品
+    products['B0PICK0001'] = product('B0PICK0001', 'PB己 浴室用 クリーナー', brand='PB己', price=((400, 1500),), sold=((60, 600),), tree=TREE_B)
+    products['B0PICK0002'] = product('B0PICK0002', 'PB庚 風呂 洗剤 ジェル', brand='PB庚', price=((400, 1200),), sold=((60, 500),), tree=TREE_B)
+    run, store, _, _, _ = make(http=FakeKeepaHttp(products, best, searches))
+    run.job_daily()
+    store.set('settings/families', {'items': {'B0OWN00004': {'picksAt': '2026-10-02T09:00:00', 'picks': [
+        {'asin': 'B0PICK0001', 'why': '競合: 同じ用途'}, {'asin': 'B0PICK0002', 'why': 'ベンチマーク: 売れ筋'},
+        {'asin': 'B0SPR00002', 'why': '競合: 価格が近い'}]}}})
+    run2, _, _, _, _ = make(store=store, http=FakeKeepaHttp(products, best, searches))
+    run2.job_markets()
+    kw = [m for m in store.get('views/markets')['items'] if m['by'] == 'keyword']
+    assert len(kw) == 1 and kw[0]['path'] == ['競合の提案で集計'] and kw[0]['catId'] == 'kw:B0OWN00004'
+    assert kw[0]['name'] == kw[0]['ownNames'][0]                                 # 市場の名前は自社商品の呼び名
+    # 市場は「自社商品 + 提案」だけ。キーワードが合うだけの自動の候補は入れない
+    assert sorted(r['asin'] for r in kw[0]['top']) == ['B0OWN00004', 'B0PICK0001', 'B0PICK0002', 'B0SPR00002']
+    assert {r['asin']: r['peakRev'] for r in kw[0]['top']}['B0PICK0001'] == 900000
+
+
+def test_products_sharing_proposals_form_one_market():
+    from collector.pipeline import Run
+    fam = lambda parent, name, picks: {'parent': parent, 'name': name, 'pool': ['OWN' + parent] + picks, 'picks': set(picks)}
+    out = Run._merge_curated([
+        fam('P1', '長財布 薄型', ['A', 'B', 'C', 'D']),
+        fam('P2', '小さい 長財布', ['B', 'C', 'D', 'E']),      # P1 と 3 件重なる → 同じ市場
+        fam('P3', '長財布 薄型', ['C', 'D', 'E', 'F']),         # P2 と 3 件重なる → つながって同じ市場
+        fam('P4', '耐火バッグ', ['A', 'B', 'X', 'Y']),           # 2 件しか重ならない → 別の市場
+    ])
+    by = {m['catId']: m for m in out}
+    assert set(by) == {'kw:P1', 'kw:P4'}
+    wallet = by['kw:P1']
+    assert wallet['name'] == '長財布 薄型' and wallet['ownNames'] == ['長財布 薄型', '小さい 長財布', '長財布 薄型']
+    assert wallet['asins'][:3] == ['OWNP1', 'OWNP2', 'OWNP3'] and sorted(wallet['asins'][3:]) == list('ABCDEF')
+    assert by['kw:P4']['asins'] == ['OWNP4', 'A', 'B', 'X', 'Y'] and by['kw:P4']['by'] == 'keyword'
+
+
 def test_market_verdict_lists_what_misses_the_rules():
     from collector.pipeline import Run
     good = {'sizePeak': 8000000, 'over': 1, 'inBand': 7, 'amazon': 0, 'medReviews': 120, 'newWinners': 2}

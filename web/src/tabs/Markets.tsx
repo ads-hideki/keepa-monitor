@@ -23,7 +23,7 @@ function Row({ m, open, toggle }: { m: MarketItem; open: boolean; toggle: () => 
     peak > m.size * 1.3 ? `いまは ${man(m.size)}` : '',
     m.unknown ? `販売数が不明 ${m.unknown}件` : '',
   ].filter(Boolean);
-  const where = m.by === 'keyword' ? 'キーワードで集計' : m.path.slice(0, -1).join(' › ');
+  const where = m.by === 'keyword' ? (m.path[0] || 'キーワードで集計') : m.path.slice(0, -1).join(' › ');
   const own = m.ownNames.length ? `自社: ${m.ownNames.slice(0, 2).join('、')}${m.ownNames.length > 2 ? ` ほか${m.ownNames.length - 2}` : ''}` : '';
   return (
     <Fragment>
@@ -125,7 +125,7 @@ export default function Markets({ db }: { db: Db }) {
             <li>レビュー数の中央値が {num(r.reviewsMax)}件以下</li>
             <li>発売1年以内で狙う範囲に届いた商品が {r.newMin}件以上</li>
           </ul>
-          <p className="sub">すべて満たすと「狙い目」、1つだけ外れると「惜しい」です。市場は、細かいカテゴリの売れ筋で見ています。カテゴリの上位が別の種類の商品ばかりのときは、商品名にキーワードを含む商品を集めて市場としています（「キーワードで集計」と表示）。
+          <p className="sub">すべて満たすと「狙い目」、1つだけ外れると「惜しい」です。市場は、細かいカテゴリの売れ筋で見ています。カテゴリの上位が別の種類の商品ばかりのときは、「競合の設定」の提案（自社商品と、その競合・ベンチマーク）を市場としています（「競合の提案で集計」と表示）。提案が重なる自社商品は 1 つの市場にまとめます。
             販売数の表示がない商品は、ランキングが上がった回数から推定しています。</p>
         </details>
       )}

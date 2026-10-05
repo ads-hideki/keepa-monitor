@@ -44,7 +44,8 @@ RESEARCH_POOL = 300          # リサーチで候補として取る件数の上�
 MARKET_TOP = 20              # 市場 1 つにつき評価する上位商品の数
 DEAL_ALERTS_MAX = 5          # セール開始の通知がこれより多い日は、アカウントごとに 1 件にまとめる
 MARKET_COMPARE = 6           # 比較用に調べる市場の数
-MARKET_KEYWORD_POOL = 30     # キーワードで集める市場 1 つにつき調べる商品の数
+MARKET_KEYWORD_POOL = 30     # カテゴリを使わない市場 1 つにつき調べる商品の数
+MARKET_SHARED = 3            # 提案がこの件数以上重なる自社商品は、同じ市場にまとめる
 MARKET_HISTORY_DAYS = 400    # 最盛期を見るために取る履歴の日数（トークンは変わらない）
 
 
@@ -684,7 +685,7 @@ class Run:
                 continue
             seen.add(r['parent'])
             rows.append({k: v for k, v in r.items() if k != 'parent'})
-        if target.get('by') == 'keyword':                    # キーワードで集めた市場は売れ筋順が無いので、月商の大きい順
+        if target.get('by') == 'keyword':                    # 提案やキーワードで集めた市場は売れ筋順が無いので、月商の大きい順
             rows.sort(key=lambda r: -r['peakRev'])
         rows = rows[:MARKET_TOP]
         top = rows[:10]
@@ -734,16 +735,31 @@ class Run:
                 out[a] = f.get('title') or ''
         return out
 
+    def _market_pool(self, parent, f, cand):
+        """カテゴリを使えないときに市場とする商品。(ASIN の一覧, 提案をもとにしたか) を返す。
+
+        商品内容を見て選んだ競合・ベンチマークの提案があれば、自社商品 + 提案（+ 利用者が選んだ競合）を市場とする。
+        提案がまだない商品は、自動の候補（商品名にキーワードを含む商品）で代用する。
+        """
+        s = self.s_fam.get(parent) or {}
+        picks = [p.get('asin') for p in (s.get('picks') or (self.candidates.get(parent) or {}).get('picks') or [])]
+        chosen = [a for a, v in sorted((s.get('competitors') or {}).items()) if (v or {}).get('on')]
+        pool = []
+        for a in [f['rep']] + ([a for a in picks if a] + chosen if picks else cand):
+            if a not in pool:
+                pool.append(a)
+        return pool, bool(picks)
+
     def market_targets(self):
         """自社商品ごとに、どの範囲を市場として見るかを決める。
 
         基本は、いちばん細かいカテゴリの売れ筋。ただしカテゴリの上位が別の種類の商品ばかりのとき
-        （小物が、別の種類の商品のカテゴリに入っている、など）は、競合候補として集めた
-        「商品名にキーワードを含む商品」を市場とする。
+        （小物が、別の種類の商品のカテゴリに入っている、など）は、その商品の競合・ベンチマークの提案を市場とする。
+        提案が 3 件以上重なる自社商品どうしは、同じ市場にまとめる。
         """
         titles = self._known_titles()
         cats = self.store.list('cats')
-        by_cat, by_kw = {}, {}
+        by_cat, by_kw, curated = {}, {}, []
         for parent, f in sorted(self.families.items()):
             c = f.get('cat') or {}
             cid = str(c.get('id') or '')
@@ -754,20 +770,53 @@ class Run:
             known = [titles[a] for a in ranking[:10] if titles.get(a)]
             share = (sum(1 for t in known if any(k in t for k in kw)) / float(len(known))) if kw and len(known) >= 5 else None
             cand = [it['asin'] for g in ('rec', 'big') for it in ((self.candidates.get(parent) or {}).get('items') or []) if it.get('group') == g]
-            if ranking and (share is None or share >= MARKET_COHERENCE or not cand):
+            pool, from_picks = self._market_pool(parent, f, cand)
+            if ranking and (share is None or share >= MARKET_COHERENCE or len(pool) < 2):
                 t = by_cat.setdefault(cid, {'catId': cid, 'name': doc.get('name') or c.get('name') or cid, 'kind': 'own', 'by': 'category',
                                             'path': [x.get('name') or '' for x in f.get('cats') or []], 'ownNames': [],
                                             'asins': ranking[:MARKET_TOP + 4]})
                 t['ownNames'].append(f['name'])
-            elif kw and cand:
-                key = kw[0].strip().lower()
-                t = by_kw.setdefault(key, {'catId': 'kw:' + key, 'name': kw[0].strip(), 'kind': 'own', 'by': 'keyword',
+            elif from_picks:
+                curated.append({'parent': parent, 'name': f['name'], 'pool': pool, 'picks': set(pool[1:])})
+            elif kw and len(pool) >= 2:
+                key = '、'.join(k.strip().lower() for k in kw)           # 提案がない商品は、キーワードの組が同じものだけまとめる
+                t = by_kw.setdefault(key, {'catId': 'kw:' + parent, 'name': f['name'], 'kind': 'own', 'by': 'keyword',
                                            'path': ['キーワードで集計'], 'ownNames': [], 'asins': []})
                 t['ownNames'].append(f['name'])
-                for a in [f['rep']] + cand:
+                for a in pool:
                     if a not in t['asins'] and len(t['asins']) < MARKET_KEYWORD_POOL:
                         t['asins'].append(a)
-        return list(by_cat.values()) + list(by_kw.values())
+        return list(by_cat.values()) + self._merge_curated(curated) + list(by_kw.values())
+
+    @staticmethod
+    def _merge_curated(fams):
+        """提案をもとにした市場を作る。提案が MARKET_SHARED 件以上重なる自社商品は、同じ種類として 1 つの市場にする。"""
+        root = list(range(len(fams)))
+
+        def find(i):
+            while root[i] != i:
+                root[i] = root[root[i]]
+                i = root[i]
+            return i
+        for i in range(len(fams)):
+            for j in range(i + 1, len(fams)):
+                if len(fams[i]['picks'] & fams[j]['picks']) >= MARKET_SHARED:
+                    root[find(j)] = find(i)
+        groups = defaultdict(list)
+        for i, fam in enumerate(fams):
+            groups[find(i)].append(fam)
+        out = []
+        for members in groups.values():
+            names = Counter(m['name'] for m in members)
+            name = sorted(names, key=lambda n: (-names[n], len(n), n))[0]      # いちばん多い呼び名。同数なら短いもの
+            asins = [m['pool'][0] for m in members]                           # 自社商品を先に、続けて提案を順に
+            for k in range(1, max(len(m['pool']) for m in members)):
+                for m in members:
+                    if k < len(m['pool']) and m['pool'][k] not in asins:
+                        asins.append(m['pool'][k])
+            out.append({'catId': 'kw:' + members[0]['parent'], 'name': name, 'kind': 'own', 'by': 'keyword',
+                        'path': ['競合の提案で集計'], 'ownNames': [m['name'] for m in members], 'asins': asins[:MARKET_KEYWORD_POOL]})
+        return out
 
     def markets(self):
         """市場の指標を作る。自社が参入している市場と、比較用の市場（直近のリサーチ結果に多く出た市場）を数値化し、
@@ -811,7 +860,7 @@ class Run:
         items.sort(key=lambda m: (m['kind'] != 'own', len(m['fails']), -m['sizePeak']))
         n_badge = sum(1 for r in rows.values() if r['sold'] and not r['est'])
         n_est = sum(1 for r in rows.values() if r['est'])
-        self.log('市場: {} 件を評価（自社が参入 {} うちキーワードで集計 {} / 比較 {}）。狙い目 {} 件'.format(
+        self.log('市場: {} 件を評価（自社が参入 {} うち提案・キーワードで集計 {} / 比較 {}）。狙い目 {} 件'.format(
             len(items), sum(1 for m in items if m['kind'] == 'own'), sum(1 for m in items if m['by'] == 'keyword'),
             sum(1 for m in items if m['kind'] == 'compare'), sum(1 for m in items if not m['fails'])))
         self.log('市場: 商品 {} 件のうち、販売数の表示あり {} / ランキングから推定 {} / 不明 {}'.format(
