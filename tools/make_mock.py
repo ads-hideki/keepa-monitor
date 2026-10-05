@@ -171,6 +171,8 @@ def main():
         http = FakeKeepaHttp(products, best, searches, finder=finder)
         keepa = Keepa('TESTKEY', http=http, sleep=http.refill, clock=lambda: 0, log=lambda s: None, max_runtime_s=10 ** 9)
         Run(store, keepa, MockCfg(), now=now, log=lambda s: None, dash_fetch=dashboard_fetch(docs)).job_daily()
+    keepa = Keepa('TESTKEY', http=FakeKeepaHttp(products, best, searches, finder=finder), sleep=lambda s: None, clock=lambda: 0, log=lambda s: None, max_runtime_s=10 ** 9)
+    Run(store, keepa, MockCfg(), now=now, log=lambda s: None, dash_fetch=dashboard_fetch(docs)).job_markets()
     keep = {p: v for p, v in store.docs.items() if p.split('/')[0] in ('views', 'candidates', 'settings')}
     out = os.path.join(ROOT, 'web', 'public', 'mock', 'db.json')
     os.makedirs(os.path.dirname(out), exist_ok=True)

@@ -306,3 +306,34 @@ def test_research_searches_all_categories_and_drops_excluded_roots():
     run2, _, _, _, _ = make(store=store, http=FakeKeepaHttp(products, best, searches, finder=list(http.finder)))
     run2.job_research()
     assert [i['asin'] for i in store.get('views/research')['items']] == ['B0RSCBOOK1', 'B0RSCGAME1', 'B0CMP00006']
+
+
+def test_markets_measures_own_and_comparison_markets():
+    products, best, searches = world()
+    # 比較用の市場: 大型商品ばかりで、Amazon 本体も売っている
+    big = ['B0BIG{:05d}'.format(i) for i in range(1, 13)]
+    for i, a in enumerate(big):
+        products[a] = product(a, '大手 プロテイン {}'.format(i), brand='大手A' if i < 6 else '大手B', price=((400, 5000),),
+                              reviews=((400, 4000 + i),), sold=((20, 10000),), amazon=4800 if i % 2 == 0 else None,
+                              offers=8, tree=((3, 'ドラッグストア'), (33, 'プロテイン')))
+    best[33] = big
+    http = FakeKeepaHttp(products, best, searches, finder=big[:3])
+    run, store, _, _, _ = make(http=http)
+    run.job_daily()                                       # リサーチ結果（比較用の市場のもと）と売れ筋の記録を作る
+    store.set('views/research', {'items': [{'asin': big[0], 'cat': {'id': 33, 'name': 'プロテイン'}, 'root': 'ドラッグストア'}]})
+    run2, _, http2, _, _ = make(store=store, http=FakeKeepaHttp(products, best, searches))
+    run2.job_markets()
+    view = store.get('views/markets')
+    assert view['band'] == [300000, 5000000]
+    by = {m['name']: m for m in view['items']}
+    own, cmp_ = by['クッション'], by['プロテイン']
+    assert own['kind'] == 'own' and own['ownNames'] and cmp_['kind'] == 'compare'
+    assert [path for path, q in http2.requests if path == 'bestsellers'] == ['bestsellers']      # 自社の市場は売れ筋を取り直さない
+    # 自社の市場: 価格 3,000円前後 × 月 400点 = 月商 120万円前後の商品が並ぶ。大手は 1 件だけ
+    assert own['inBand'] >= 5 and own['over'] == 0 and own['big'] == 1 and own['ownRev'] > 0
+    assert any(r['own'] for r in own['top'])
+    # 比較用の市場: 月商 5,000万円の商品ばかりで、狙う範囲の商品はない
+    assert cmp_['inBand'] == 0 and cmp_['over'] == 12 and cmp_['big'] == 10 and cmp_['amazon'] == 5
+    assert cmp_['size'] == 10 * 5000 * 10000 and cmp_['topBrand'] == '大手A' and cmp_['topShare'] == 60
+    assert cmp_['medReviews'] > 1000 > own['medReviews']
+    assert view['items'][0]['kind'] == 'own' and view['items'][-1]['kind'] == 'compare'

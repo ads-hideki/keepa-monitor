@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""使い方: python -m collector <auto|daily|prices|candidates|research>"""
+"""使い方: python -m collector <auto|daily|prices|candidates|research|markets>"""
 import os
 import sys
 import traceback
@@ -11,7 +11,7 @@ from .parse import JST
 from .pipeline import Run
 from .store import FirestoreStore
 
-JOBS = ('auto', 'daily', 'prices', 'candidates', 'research')
+JOBS = ('auto', 'daily', 'prices', 'candidates', 'research', 'markets')
 
 
 def main(argv):

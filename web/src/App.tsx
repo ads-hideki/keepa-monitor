@@ -4,6 +4,7 @@ import { explain, MOCK, source } from './lib/source';
 import type { Db, TabId } from './lib/types';
 import Catalog from './tabs/Catalog';
 import Category from './tabs/Category';
+import Markets from './tabs/Markets';
 import Overview from './tabs/Overview';
 import Price from './tabs/Price';
 import Research from './tabs/Research';
@@ -141,7 +142,7 @@ export default function App() {
         {tab === 'category' && <Category db={db} acct={acct} />}
         {tab === 'catalog' && <Catalog {...props} />}
         {tab === 'stock' && <Stock {...props} />}
-        {tab === 'research' && <Research db={db} />}
+        {tab === 'research' && <><Markets db={db} /><Research db={db} /></>}
         {tab === 'sales' && <Sales {...props} />}
         {tab === 'setup' && <Setup {...props} />}
       </main>

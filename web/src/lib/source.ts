@@ -32,11 +32,13 @@ function toDb(get: (path: string) => any): Db {
     ownAsins: get('views/setup')?.ownAsins ?? [],
     families: get('settings/families')?.items ?? {},
     brands: get('settings/brands')?.excluded ?? [],
+    researchSettings: get('settings/research') ?? null,
+    markets: get('views/markets') ?? null,
   };
 }
 
 const VIEW_PATHS = ['views/overview', 'views/own', 'views/comps', 'views/cats', 'views/sales', 'views/research', 'views/setup',
-  'settings/families', 'settings/brands'];
+  'settings/families', 'settings/brands', 'settings/research', 'views/markets'];
 
 // ---------------------------------------------------------------- 模擬データ
 function mockSource(): Source {

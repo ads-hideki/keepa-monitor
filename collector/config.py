@@ -44,6 +44,8 @@ DEFAULT_THRESHOLDS = {
 # 新商品リサーチの初期条件（settings/research で上書きできる）
 DEFAULT_RESEARCH = {
     'priceMin': 1500, 'priceMax': 5000, 'rankMax': 10000, 'reviewsMax': 100, 'soldMin': 300, 'limit': 30,
+    # 狙う商品の推定月商（価格 × 月間販売数）の範囲。市場の評価に使う。
+    'revMin': 300000, 'revMax': 5000000,
     # リサーチの対象から外す大カテゴリ（名前）。カテゴリでは絞らず、作って売る対象にならないものだけを外す。
     # 1 文字の名前は完全一致、2 文字以上は「含む」で判定する。画面で変えられる。
     'excludeRoots': ['本', '洋書', 'Kindle', 'ミュージック', 'クラシック', 'DVD', 'ゲーム', 'PCソフト', 'Prime Video',

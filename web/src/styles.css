@@ -205,3 +205,5 @@ button:disabled,input:disabled{opacity:.55;cursor:default}
 .roots{border:1px solid var(--line);border-radius:8px;padding:8px 12px 10px;margin:0;flex-basis:100%;min-width:0}
 .roots legend{font-size:12px;color:var(--ink2);padding:0 4px}
 .roots-l{display:flex;flex-wrap:wrap;gap:4px 16px}
+.tbl tr.sub-r > td{background:var(--bg);padding:8px 10px 12px}
+.tbl tr.sub-r .tbl td,.tbl tr.sub-r .tbl th{background:transparent}

@@ -127,6 +127,9 @@ export interface ResearchParams {
   limit: number;
   /** 対象から外す大カテゴリの名前。1 文字は完全一致、2 文字以上は「含む」で判定 */
   excludeRoots?: string[];
+  /** 狙う商品の推定月商の範囲（円） */
+  revMin?: number;
+  revMax?: number;
 }
 export interface ResearchItem {
   asin: string;
@@ -151,6 +154,49 @@ export interface Research {
   /** 取得した候補に含まれていた大カテゴリの名前 */
   roots?: string[];
   sort?: 'sold' | 'rank';
+}
+
+export interface MarketProduct {
+  asin: string;
+  title: string;
+  brand: string;
+  price: number | null;
+  sold: number | null;
+  /** 推定月商 = 価格 × 月間販売数（下限の目安） */
+  rev: number;
+  reviews: number | null;
+  rating: number | null;
+  months: number | null;
+  big: boolean;
+  amazon: boolean;
+  own: boolean;
+}
+export interface MarketItem {
+  catId: string;
+  name: string;
+  path: string[];
+  kind: 'own' | 'compare' | 'found';
+  ownNames: string[];
+  n: number;
+  size: number;
+  inBand: number;
+  over: number;
+  big: number;
+  amazon: number;
+  topBrand: string;
+  topShare: number | null;
+  brands: number;
+  medReviews: number | null;
+  medRating: number | null;
+  medPrice: number | null;
+  newWinners: number;
+  ownRev: number;
+  top: MarketProduct[];
+}
+export interface Markets {
+  updatedAt: string;
+  band: [number, number];
+  items: MarketItem[];
 }
 
 export interface SetupComp {
@@ -223,4 +269,7 @@ export interface Db {
   ownAsins: string[];
   families: Record<string, FamilySetting>;
   brands: string[];
+  /** 画面で保存したリサーチ条件（まだ取得に反映されていない分を含む） */
+  researchSettings: Partial<ResearchParams> | null;
+  markets: Markets | null;
 }
