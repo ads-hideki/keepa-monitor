@@ -425,3 +425,23 @@ def test_imported_proposals_become_the_competitor_list():
     assert not any('競合の提案' in str(x) for x in logs3)
     assert [c['asin'] for c in store.get('views/comps')['items'] if c['parent'] == 'B0PARENT01'] == ['B0CMP00003']
     assert len(store.get('candidates/B0PARENT01')['picks']) == 5
+
+
+def test_prices_job_accepts_own_items_saved_by_an_older_version():
+    """価格だけの回は、保存済みの自社商品の一覧を使う。古い版が保存した形（7日前との比較）でも止まらない。"""
+    run, store, _, _, _ = make()
+    run.job_daily()
+    own = store.get('views/own')
+    for it in own['items']:                              # 古い版の形に戻す
+        for key in ('rating30', 'rank30', 'reviews30', 'sold30', 'cmpDays', 'rankNow3'):
+            it.pop(key, None)
+        it.update({'rating7': 4.3, 'rank7': 1000, 'reviews7': 90, 'rankNow3': 1600, 'rankWeek3': 1000})
+    own['items'][0]['status'] = {'sev': 'crit', 'label': '評価低下'}
+    own['items'][0]['rating'] = 4.1
+    own['items'][1]['status'] = {'sev': 'serious', 'label': 'ランキング急落'}
+    store.set('views/own', own)
+    for job in ('job_prices', 'job_candidates'):
+        run2, _, _, _, _ = make(store=store, now=NOW + timedelta(hours=5))
+        getattr(run2, job)()
+        texts = ' / '.join(a['text'] + '｜' + (a.get('sub') or '') for a in store.get('views/overview')['alerts'])
+        assert '評価が 4.3 → 4.1 に低下｜7日前との比較' in texts and 'ランキング' not in texts

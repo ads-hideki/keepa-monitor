@@ -860,11 +860,14 @@ class Run:
                             'text': '{} が在庫切れ {}日目'.format(name, c['outDays']), 'sub': sub_own + 'の広告強化を検討できます'})
         for it in own_items:
             st, label, acct = it['status'], '「{}」'.format(it['name']), it['acct']
-            cmp_text = '{}日前との比較'.format(it.get('cmpDays') or th['compareDays'])
-            if st['label'] == '評価低下':
+            # 価格だけを取り直す回は、前回の朝の取得で保存した自社商品の一覧をそのまま使う。
+            # 古い版が保存した一覧（7日前との比較）が残っていても止まらないよう、無い項目は読み替える。
+            cmp_text = '{}日前との比較'.format(it.get('cmpDays') or 7)
+            rating_before = it.get('rating30') if it.get('rating30') is not None else it.get('rating7')
+            if st['label'] == '評価低下' and rating_before is not None and it.get('rating') is not None:
                 out.append({'sev': 'crit', 'type': 'catalog', 'tab': 'catalog', 'acct': acct,
-                            'text': '{}の評価が {:.1f} → {:.1f} に低下'.format(label, it['rating30'], it['rating']), 'sub': cmp_text})
-            elif st['label'] == '販売数減少':
+                            'text': '{}の評価が {:.1f} → {:.1f} に低下'.format(label, rating_before, it['rating']), 'sub': cmp_text})
+            elif st['label'] == '販売数減少' and it.get('sold30'):
                 now_text = '{:,}点以上'.format(it['sold']) if it.get('sold') else '表示なし（50点未満）'
                 out.append({'sev': 'serious', 'type': 'catalog', 'tab': 'catalog', 'acct': acct,
                             'text': '{}の月間販売が {:,}点以上 → {} に減少'.format(label, it['sold30'], now_text),
