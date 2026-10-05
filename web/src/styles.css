@@ -213,3 +213,38 @@ button:disabled,input:disabled{opacity:.55;cursor:default}
 .importform .fld.wide{flex:1 1 420px}
 .importform textarea{width:100%;min-height:84px;padding:8px 10px;border:1px solid var(--axis);border-radius:8px;background:var(--surface,transparent);color:var(--ink);font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;resize:vertical}
 .importform input[type=file]{font-size:13px;max-width:100%;width:auto;border:0;padding:0;background:transparent}
+
+/* 競合の設定: 左に自社商品の一覧（スクロールしても画面に残る）、右に選んだ商品の提案 */
+.accts{align-self:flex-start}
+.accts .cnt{margin-left:6px;font-size:11px;font-weight:400;color:var(--muted)}
+.setup-grid{display:grid;grid-template-columns:288px minmax(0,1fr);gap:16px;align-items:start}
+.picker{position:sticky;top:calc(env(safe-area-inset-top,0px) + 52px);max-height:calc(100vh - 68px);max-height:calc(100dvh - 68px);padding:12px;gap:10px}
+.picker .form{gap:8px}
+.picker .fld{width:100%}
+.picker .fld input[type=search],.psel select{width:100%}
+.psel{display:none}
+.plist{list-style:none;margin:0 -6px;padding:4px 2px 0;border-top:1px solid var(--line);overflow-y:auto;min-height:0;display:flex;flex-direction:column;gap:1px}
+.plist .empty{padding:8px;font-size:13px}
+.pitem{display:flex;flex-direction:column;gap:1px;width:100%;text-align:left;border:0;border-left:3px solid transparent;background:transparent;padding:7px 8px;border-radius:6px;cursor:pointer}
+.pitem:hover{background:var(--surface2)}
+.pitem:focus-visible{outline-offset:-2px}
+.pitem[aria-current="true"]{background:var(--accent-soft);border-left-color:var(--accent)}
+.pitem-n{font-weight:600;font-size:13px;line-height:1.45}
+.pitem-s{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--c);flex:none}
+.nav{display:flex;align-items:center;gap:8px;flex:none;font-size:12px;font-variant-numeric:tabular-nums}
+.ghost:disabled{opacity:.45;cursor:default}
+.dh{flex:1 1 260px;min-width:0}
+#detail{scroll-margin-top:56px}
+.why-m{display:none;margin-top:4px}
+#detail .tbl td.why{min-width:150px}
+#detail .addform .fld{flex:1 1 260px}
+#detail .addform .fld input{width:100%}
+@media (max-width:860px){
+  .setup-grid{grid-template-columns:minmax(0,1fr)}
+  .picker{position:static;max-height:none}
+  .plist{display:none}
+  .psel{display:flex}
+  #detail .tbl .why{display:none}
+  .why-m{display:block}
+}

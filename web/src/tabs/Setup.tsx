@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { matches, Pill, Price, ProductLink, SearchBox, Thumb } from '../components/ui';
 import { num, parseAsin, yen } from '../lib/format';
 import { explain, source } from '../lib/source';
@@ -36,7 +36,15 @@ export default function Setup({ db, acct, label }: { db: Db; acct: string; label
   const [fam, setFam] = useState<Record<string, FamilySetting>>(db.families);
   const [brands, setBrands] = useState<string[]>(db.brands);
   const [cands, setCands] = useState<Record<string, CandidateDoc | null>>({});
-  const [sel, setSel] = useState<string | null>(null);
+  const accounts = useMemo(() => {
+    const have = new Set(db.setup.map(it => it.acct));
+    const order = (db.overview?.accounts || []).filter(a => have.has(a));
+    return [...order, ...[...have].filter(a => !order.includes(a))];
+  }, [db.setup, db.overview]);
+  const [tab, setTab] = useState(acct !== 'all' && accounts.includes(acct) ? acct : accounts[0] ?? '');
+  /** アカウントごとに、最後に開いていた商品を覚えておく */
+  const [selBy, setSelBy] = useState<Record<string, string>>({});
+  const listRef = useRef<HTMLUListElement>(null);
   const [q, setQ] = useState('');
   const [onlyUnset, setOnlyUnset] = useState(false);
   const [showAll, setShowAll] = useState(false);
@@ -65,13 +73,37 @@ export default function Setup({ db, acct, label }: { db: Db; acct: string; label
   };
   const pickCount = (it: SetupItem) => fam[it.parent]?.picks?.length ?? it.picks ?? 0;
 
-  const all = db.setup.filter(it => acct === 'all' || it.acct === acct);
-  const list = all
-    .filter(it => matches(q, it.name, it.title, it.rep, it.parent) && (!onlyUnset || !Object.keys(fam[it.parent]?.competitors || {}).length))
-    .sort((a, b) => (Object.keys(fam[a.parent]?.competitors || {}).length ? 1 : 0) - (Object.keys(fam[b.parent]?.competitors || {}).length ? 1 : 0));
-  const cur = list.find(it => it.parent === sel) ?? list[0];
-  const chosen = all.filter(it => Object.keys(fam[it.parent]?.competitors || {}).length).length;
+  const byUser = (it: SetupItem) => !!Object.keys(fam[it.parent]?.competitors || {}).length;
+
+  // 画面上部のアカウント切り替えで 1 つを選んだら、このタブも同じアカウントに合わせる
+  useEffect(() => { if (acct !== 'all' && accounts.includes(acct)) setTab(acct); }, [acct, accounts]);
+
+  const all = db.setup.filter(it => it.acct === tab);
+  const cur: SetupItem | undefined = all.find(it => it.parent === selBy[tab]) ?? all[0];
+  // 並び順は固定。選んだあとに行が動かないよう、開いている商品は絞り込み中も一覧に残す
+  const list = all.filter(it => matches(q, it.name, it.title, it.rep, it.parent) && (!onlyUnset || !byUser(it) || it === cur));
+  const pos = cur ? all.indexOf(cur) : -1;
+  const next = list.find(it => all.indexOf(it) > pos);
+  const prev = [...list].reverse().find(it => all.indexOf(it) < pos);
+  const chosen = all.filter(byUser).length;
   const total = new Set(all.flatMap(selected)).size;
+
+  /** 商品を切り替える。提案の先頭が画面の上に隠れているときは、そこまで戻す。 */
+  const pick = (parent: string) => {
+    setSelBy(s => ({ ...s, [tab]: parent }));
+    const top = document.getElementById('detail')?.getBoundingClientRect().top;
+    if (top != null && top < 48) window.scrollBy({ top: top - 56 });
+  };
+
+  // 左の一覧で、開いている商品が見える位置にくるようにする（一覧の中だけを動かす）
+  useEffect(() => {
+    const box = listRef.current;
+    const el = cur && box?.querySelector<HTMLElement>(`[data-p="${cur.parent}"]`);
+    if (!box || !el) return;
+    const a = el.offsetTop - box.offsetTop, b = a + el.offsetHeight;
+    if (a < box.scrollTop) box.scrollTop = a - 4;
+    else if (b > box.scrollTop + box.clientHeight) box.scrollTop = b - box.clientHeight + 4;
+  }, [cur?.parent, tab]);
 
   useEffect(() => {
     if (!cur) return;
@@ -187,7 +219,14 @@ export default function Setup({ db, acct, label }: { db: Db; acct: string; label
     setImportMsg('ファイルを読み込みました。「取り込む」を押してください。');
   };
 
-  let detail = <section className="card"><p className="empty">表示する商品がありません</p></section>;
+  const nav = cur && (
+    <div className="nav">
+      <button type="button" className="ghost" disabled={!prev} onClick={() => prev && pick(prev.parent)}>前の商品</button>
+      <span className="mut">{pos + 1} / {all.length}</span>
+      <button type="button" className="ghost" disabled={!next} onClick={() => next && pick(next.parent)}>次の商品</button>
+    </div>
+  );
+  let detail = <section className="card" id="detail"><p className="empty">このアカウントには、表示する商品がありません</p></section>;
   if (cur) {
     const s = fam[cur.parent];
     const on = new Set(selected(cur));
@@ -214,20 +253,25 @@ export default function Setup({ db, acct, label }: { db: Db; acct: string; label
     const mine = db.own.find(o => o.parent === cur.parent);
     detail = (
       <section className="card" id="detail">
-        <div>
-          <h2>「{cur.name}」の競合</h2>
-          <p className="sub">{label(cur.acct)}・{cur.rep}・色やサイズ {cur.nvar}件{mine?.price != null ? `・自社価格 ${yen(mine.price)}` : ''}。
-            {proposed
-              ? ` 商品内容を見て選んだ、競合・ベンチマークの提案 ${picks.length}件です。この中から、監視する商品を2つほど選んでください。`
-              : doc ? ` この商品の提案はまだ作っていません。同じカテゴリの売れ筋と検索結果から、自動で ${picks.length}件に絞って表示しています。` : ''}
-            {' '}選ぶまでは、上から出品のある2件を自動で監視します。</p>
+        <div className="card-h">
+          <div className="dh">
+            <h2>「{cur.name}」の競合</h2>
+            <p className="sub"><ProductLink asin={cur.rep}>{cur.rep}</ProductLink>・色やサイズ {cur.nvar}件{mine?.price != null ? `・自社価格 ${yen(mine.price)}` : ''}・
+              {s?.competitors && Object.keys(s.competitors).length ? `選択済み ${on.size}件` : `自動で監視中 ${on.size}件`}</p>
+          </div>
+          {nav}
         </div>
+        <p className="sub">
+          {proposed
+            ? `商品内容を見て選んだ、競合・ベンチマークの提案 ${picks.length}件です。監視する商品を2つほど選んでください。`
+            : doc ? `この商品の提案はまだ作っていません。同じカテゴリの売れ筋と検索結果から、自動で ${picks.length}件に絞って表示しています。` : ''}
+          {' '}選ぶまでは、上から出品のある2件を自動で監視します。</p>
         {doc === undefined && <p className="empty">候補を読み込んでいます…</p>}
         {doc === null && !rows.length && <p className="empty">この商品の候補はまだ作られていません。次回の取得で作ります。ASIN での追加は今すぐできます。</p>}
         {rows.length > 0 && (
           <div className="tw">
             <table className="tbl">
-              <thead><tr><th>監視</th><th>商品</th><th className="n">価格</th><th className="n">評価</th><th className="n">レビュー数</th><th className="n">月間販売</th><th>区分と理由</th></tr></thead>
+              <thead><tr><th>監視</th><th>商品</th><th className="n">価格</th><th className="n">評価</th><th className="n">月間販売</th><th className="why">区分と理由</th></tr></thead>
               <tbody>
                 {rows.map(c => (
                   <tr key={c.asin}>
@@ -241,18 +285,19 @@ export default function Setup({ db, acct, label }: { db: Db; acct: string; label
                             {user[c.asin]?.manual && <>・<button type="button" className="link" disabled={busy} onClick={() => apply(cur, { [c.asin]: null }, `${c.asin} を削除しました。`)}>削除</button></>}
                             {c.brand && !user[c.asin]?.manual && showAll && <>・<button type="button" className="link" disabled={busy} onClick={() => setBrandList([...new Set([...brands, c.brand])], `「${c.brand}」を除外しました。全商品の候補から外れます。`)}>このブランドを除外</button></>}
                           </div>
+                          <div className="why-m"><Why text={c.why} tag={c.tag} /></div>
                         </div>
                       </div>
                     </td>
-                    {c.pending ? <td className="n" colSpan={4}><span className="mut">次回の取得で反映</span></td> : (
+                    {c.pending ? <td className="n" colSpan={3}><span className="mut">次回の取得で反映</span></td> : (
                       <>
                         <td className="n"><Price value={c.price} /></td>
-                        <td className="n">{c.rating != null ? c.rating.toFixed(1) : <span className="mut">不明</span>}</td>
-                        <td className="n">{c.reviews != null ? `${num(c.reviews)}件` : <span className="mut">不明</span>}</td>
+                        <td className="n">{c.rating != null ? c.rating.toFixed(1) : <span className="mut">不明</span>}
+                          <div className="cellsub">{c.reviews != null ? `${num(c.reviews)}件` : 'レビュー不明'}</div></td>
                         <td className="n">{c.sold != null ? `${num(c.sold)}点以上` : <span className="mut">表示なし</span>}</td>
                       </>
                     )}
-                    <td><Why text={c.why} tag={c.tag} /></td>
+                    <td className="why"><Why text={c.why} tag={c.tag} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -268,7 +313,10 @@ export default function Setup({ db, acct, label }: { db: Db; acct: string; label
           </label>
           <button type="submit" className="btn" disabled={busy}>競合に追加</button>
         </form>
-        <p className="sub" role="status">{msg || 'チェックを入れた商品を監視します。変更は次回の取得から、ほかのタブに反映されます。'}</p>
+        <div className="card-h">
+          <p className="sub dh" role="status">{msg || 'チェックを入れた商品を監視します。変更は次回の取得から、ほかのタブに反映されます。'}</p>
+          {nav}
+        </div>
         <details>
           <summary>自動の候補の出し方を調整する</summary>
           <form className="form kwform" onSubmit={saveKw}>
@@ -286,50 +334,61 @@ export default function Setup({ db, acct, label }: { db: Db; acct: string; label
     );
   }
 
+  const state = (it: SetupItem) => {
+    const n = selected(it).length;
+    return byUser(it) ? { c: 'good', text: `選択済み ${n}件` } : n ? { c: 'neutral', text: `自動で監視 ${n}件` } : { c: 'warn', text: '未設定' };
+  };
+  const options = cur && !list.includes(cur) ? [cur, ...list] : list;
+
   return (
     <>
       <section className="card">
         <div>
           <h2>競合の設定</h2>
-          <p className="sub">自社商品ごとに、競合・ベンチマークにあたる商品を 5〜10 件提案します。その中から監視する商品を選んでください。
-            新しく追加された商品は、提案を作るまでのあいだ、自動で絞った候補を表示します。</p>
+          <p className="sub">アカウントと自社商品を選ぶと、その商品の競合・ベンチマークの提案（5〜10 件）を表示します。監視する商品にチェックを入れてください。</p>
         </div>
-        <p>自社 <b>{all.length}</b>商品のうち、競合を選択済み <b>{chosen}</b>、自動で監視中 <b>{all.length - chosen}</b>。監視中の競合は <b>{total}</b>件です。</p>
+        {accounts.length > 1 && (
+          <div className="seg accts" role="group" aria-label="アカウント">
+            {accounts.map(a => (
+              <button key={a} type="button" aria-pressed={tab === a} onClick={() => setTab(a)}>
+                {label(a)}<span className="cnt">{db.setup.filter(it => it.acct === a).length}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <p>{label(tab)}の <b>{all.length}</b>商品のうち、競合を選択済み <b>{chosen}</b>、自動で監視中 <b>{all.length - chosen}</b>。監視中の競合は <b>{total}</b>件です。</p>
       </section>
-      {detail}
-      <section className="card">
-        <div className="card-h">
-          <div><h2>自社商品の一覧</h2><p className="sub">商品名を押すと、上に提案を表示します。</p></div>
+      <div className="setup-grid">
+        <section className="card picker" aria-label="自社商品">
           <div className="form">
             <SearchBox value={q} onChange={setQ} />
             <label className="chk"><input type="checkbox" checked={onlyUnset} onChange={e => setOnlyUnset(e.target.checked)} />まだ選んでいない商品だけ</label>
           </div>
-        </div>
-        <div className="tw">
-          <table className="tbl">
-            <thead><tr><th>自社商品</th><th>状態</th><th>監視中の競合</th></tr></thead>
-            <tbody>
-              {list.map(it => {
-                const on = selected(it);
-                const byUser = !!Object.keys(fam[it.parent]?.competitors || {}).length;
-                const n = pickCount(it);
-                return (
-                  <tr key={it.parent} className={cur && it.parent === cur.parent ? 'sel' : ''}>
-                    <td className="name" title={it.title}>
-                      <button className="rowbtn" aria-pressed={cur ? it.parent === cur.parent : false}
-                        onClick={() => { setSel(it.parent); document.getElementById('detail')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }}>{it.name}</button>
-                      <div className="cellsub">{label(it.acct)}・{it.rep}・色やサイズ {it.nvar}件{it.isNew ? '・新しく追加' : ''}{n ? `・提案 ${n}件` : '・提案なし'}</div>
-                    </td>
-                    <td>{byUser ? <Pill kind="good">選択済み {on.length}件</Pill> : on.length ? <Pill kind="neutral">自動で監視 {on.length}件</Pill> : <Pill kind="warn">未設定</Pill>}</td>
-                    <td>{on.length ? on.map(a => info[a]?.title || a).join('、') : <span className="mut">なし</span>}</td>
-                  </tr>
-                );
-              })}
-              {!list.length && <tr><td colSpan={3} className="empty">該当する商品はありません</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </section>
+          {cur && (
+            <label className="fld psel">自社商品（{list.length}件）
+              <select value={cur.parent} onChange={e => pick(e.target.value)}>
+                {options.map(it => <option key={it.parent} value={it.parent}>{byUser(it) ? '✓ ' : ''}{it.name}</option>)}
+              </select>
+            </label>
+          )}
+          <ul className="plist" ref={listRef}>
+            {list.map(it => {
+              const st = state(it);
+              return (
+                <li key={it.parent}>
+                  <button type="button" className="pitem" data-p={it.parent} title={it.title}
+                    aria-current={cur && it.parent === cur.parent ? 'true' : undefined} onClick={() => pick(it.parent)}>
+                    <span className="pitem-n">{it.name}</span>
+                    <span className="pitem-s"><i className={`dot p-${st.c}`} />{st.text}{it.isNew ? '・新しく追加' : ''}{pickCount(it) ? '' : '・提案なし'}</span>
+                  </button>
+                </li>
+              );
+            })}
+            {!list.length && <li className="empty">該当する商品はありません</li>}
+          </ul>
+        </section>
+        {detail}
+      </div>
       <section className="card">
         <div><h2>除外しているブランド</h2><p className="sub">ここにあるブランドは、自動の候補に出しません。大手ブランドなど、競合として見ないものを登録します。</p></div>
         {brands.length ? (
