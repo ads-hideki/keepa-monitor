@@ -24,7 +24,7 @@ def pts(pairs, now=NOW):
 
 def product(asin, title, brand='PB', parent=None, variations=None, price=((400, 3000),), rank=((400, 1000),),
             rating=((400, 43),), reviews=((400, 100),), sold=((60, 300), (20, 400)), coupon=None, coupon_hist=None,
-            deals=None, amazon=None, offers=1, tree=((1, 'ルート'), (11, 'カテゴリA')), image='img.jpg', now=NOW):
+            deals=None, amazon=None, offers=1, tree=((1, 'ルート'), (11, 'カテゴリA')), image='img.jpg', now=NOW, drops=None):
     csv = [None] * 36
     csv[1], csv[3], csv[16], csv[17] = pts(price, now), pts(rank, now), pts(rating, now), pts(reviews, now)
     cur = [-1] * 36
@@ -34,7 +34,7 @@ def product(asin, title, brand='PB', parent=None, variations=None, price=((400, 
     return {
         'asin': asin, 'title': title, 'brand': brand, 'parentAsin': parent,
         'variations': [{'asin': a, 'attributes': [{'dimension': 'Color', 'value': a[-2:]}]} for a in (variations or [])],
-        'csv': csv, 'stats': {'current': cur, 'totalOfferCount': offers},
+        'csv': csv, 'stats': {'current': cur, 'totalOfferCount': offers, 'salesRankDrops30': drops},
         'monthlySold': sorted(sold)[0][1] if sold else None, 'monthlySoldHistory': pts(sold, now) if sold else None,
         'coupon': coupon, 'couponHistory': coupon_hist, 'deals': deals,
         'images': [{'l': image, 'm': image}], 'categoryTree': [{'catId': i, 'name': n} for i, n in tree],

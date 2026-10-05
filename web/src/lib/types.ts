@@ -161,9 +161,15 @@ export interface MarketProduct {
   title: string;
   brand: string;
   price: number | null;
+  /** いまの月間販売数の目安。Amazon の表示、なければランキングの動きからの推定（est が true） */
   sold: number | null;
-  /** 推定月商 = 価格 × 月間販売数（下限の目安） */
+  est?: boolean;
+  /** 過去12か月でよく売れた3か月の平均（最盛期） */
+  peak?: number | null;
+  /** いまの推定月商 = 価格 × 月間販売数（下限の目安） */
   rev: number;
+  /** 最盛期の推定月商 */
+  peakRev?: number;
   reviews: number | null;
   rating: number | null;
   months: number | null;
@@ -176,9 +182,13 @@ export interface MarketItem {
   name: string;
   path: string[];
   kind: 'own' | 'compare' | 'found';
+  /** 市場の決め方。category = 細かいカテゴリの売れ筋、keyword = 商品名にキーワードを含む商品 */
+  by?: 'category' | 'keyword';
   ownNames: string[];
   n: number;
   size: number;
+  sizePeak?: number;
+  seasonal?: boolean;
   inBand: number;
   over: number;
   big: number;
@@ -186,16 +196,21 @@ export interface MarketItem {
   topBrand: string;
   topShare: number | null;
   brands: number;
+  estimated?: number;
+  unknown?: number;
   medReviews: number | null;
   medRating: number | null;
   medPrice: number | null;
   newWinners: number;
   ownRev: number;
+  /** 狙い目の基準に合わない点。空なら狙い目。古いデータには無い */
+  fails?: string[];
   top: MarketProduct[];
 }
 export interface Markets {
   updatedAt: string;
   band: [number, number];
+  rules?: Record<string, number>;
   items: MarketItem[];
 }
 

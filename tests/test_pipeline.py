@@ -337,3 +337,47 @@ def test_markets_measures_own_and_comparison_markets():
     assert cmp_['size'] == 10 * 5000 * 10000 and cmp_['topBrand'] == '大手A' and cmp_['topShare'] == 60
     assert cmp_['medReviews'] > 1000 > own['medReviews']
     assert view['items'][0]['kind'] == 'own' and view['items'][-1]['kind'] == 'compare'
+
+
+def test_markets_use_keywords_when_the_category_is_about_something_else():
+    products, best, searches = world()
+    # カテゴリ B（スプレー）の上位を、自社商品とは別の種類の商品に入れ替える。キーワード「カビ取り」を含むのは自社と検索結果だけ
+    others = ['B0OTH{:05d}'.format(i) for i in range(1, 25)]
+    for i, a in enumerate(others):
+        products[a] = product(a, '別ブランド{} スマホ ケース'.format(i), brand='OTH{}'.format(i), tree=TREE_B)
+    best[22] = others[:4] + ['B0OWN00004'] + others[4:]
+    # 検索で見つかる同じ種類の商品。1 件は販売数の表示がなく、ランキングの動きから推定する
+    products['B0SPR00001'] = product('B0SPR00001', 'PB丁 カビ取り スプレー', brand='PB丁', price=((400, 2000),), sold=None, drops=120, tree=TREE_B)
+    products['B0SPR00002'] = product('B0SPR00002', 'PB戊 カビ取り スプレー 泡', brand='PB戊', price=((400, 1000),),
+                                     sold=((150, 3000), (120, 3000), (90, 3000), (30, 200)), tree=TREE_B)
+    searches['カビ取り'] = ['B0SPR00002', 'B0SPR00001', 'B0SPR00003']
+    run, store, _, _, _ = make(http=FakeKeepaHttp(products, best, searches))
+    run.job_daily()
+    assert store.get('candidates/B0OWN00004')['kw']                              # キーワードは候補作りで決まる
+    run2, _, http2, logs, _ = make(store=store, http=FakeKeepaHttp(products, best, searches))
+    run2.job_markets()
+    view = store.get('views/markets')
+    by = {m['catId']: m for m in view['items']}
+    assert '22' not in by                                                        # 別の種類ばかりのカテゴリは市場にしない
+    kw = [m for m in view['items'] if m['by'] == 'keyword'][0]
+    assert kw['kind'] == 'own' and kw['path'] == ['キーワードで集計'] and kw['ownNames']
+    assert all('カビ取り' in r['title'] for r in kw['top']) and any(r['own'] for r in kw['top'])
+    rows = {r['asin']: r for r in kw['top']}
+    assert rows['B0SPR00001']['sold'] == 120 and rows['B0SPR00001']['est'] and rows['B0SPR00001']['rev'] == 240000
+    season = rows['B0SPR00002']                                                  # いまは 200 点、最盛期は 3000 点
+    assert season['sold'] == 200 and season['peak'] == 3000 and season['peakRev'] == 3000000 and season['rev'] == 200000
+    assert kw['top'][0]['asin'] == 'B0SPR00002'                                  # 最盛期の月商が大きい順
+    assert kw['sizePeak'] > kw['size'] and kw['seasonal'] and kw['estimated'] == 1
+    assert by['11']['by'] == 'category'                                          # 同じ種類が並ぶカテゴリはそのまま使う
+    hist = [q for path, q in http2.requests if path == 'product']
+    assert hist and all(q['history'] == '1' and q['days'] == '400' for q in hist)
+    assert any('ランキングから推定 1' in line for line in logs)
+
+
+def test_market_verdict_lists_what_misses_the_rules():
+    from collector.pipeline import Run
+    good = {'sizePeak': 8000000, 'over': 1, 'inBand': 7, 'amazon': 0, 'medReviews': 120, 'newWinners': 2}
+    assert Run.judge(good) == []
+    assert Run.judge(dict(good, sizePeak=150000000, over=9, medReviews=1400)) == ['市場が大きすぎる', '大型商品が多い', 'レビューが多い']
+    assert Run.judge(dict(good, sizePeak=900000, inBand=1, newWinners=0)) == ['市場が小さい', '中規模の商品が少ない', '新しい成功例がない']
+    assert Run.judge(dict(good, amazon=6, medReviews=None)) == ['Amazon本体の販売が多い']

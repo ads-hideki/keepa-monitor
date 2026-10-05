@@ -157,6 +157,53 @@ def monthly_sold(p):
     return out
 
 
+def sold_estimate(p):
+    """いまの月間販売数の目安を (点数, 出どころ) で返す。
+
+    'badge' … Amazon が表示している「過去1か月で○点以上購入」。
+    'rank'  … 表示がない商品の代わりの推定。直近30日にランキングが上がった回数（売れるたびに順位が上がる）。
+              よく売れる商品では実際より少なく出るので、どちらも下限の目安。
+    """
+    v = p.get('monthlySold')
+    if isinstance(v, int) and v > 0:
+        return v, 'badge'
+    d = (p.get('stats') or {}).get('salesRankDrops30')
+    if isinstance(d, int) and d > 0:
+        return d, 'rank'
+    return None, None
+
+
+def peak_sold(p, today, months=12, top=3):
+    """過去 months か月のうち、販売数の表示が多かった上位 top か月の平均（最盛期の目安）。
+
+    季節商品は先月の数字だけでは小さく見えるため。1 か月だけの山（セールなど）に引きずられないよう平均にする。
+    記録が始まる前の月は数えない。表示が一度もなければ None。
+    """
+    by_month = monthly_sold(p)
+    if not by_month:
+        return None
+    keys, y, m = [], today.year, today.month
+    for _ in range(months):
+        keys.append('{:04d}-{:02d}'.format(y, m))
+        m -= 1
+        if m == 0:
+            y, m = y - 1, 12
+    vals = sorted((v for v in month_series(by_month, sorted(keys)) if v is not None), reverse=True)[:top]
+    if not vals or not vals[0]:
+        return None
+    return int(round(sum(vals) / float(len(vals))))
+
+
+def average_price(p):
+    """直近 90 日の新品価格の平均。いま出品がない商品の月商を見積もるのに使う。"""
+    st = p.get('stats') or {}
+    for key in ('avg90', 'avg'):
+        a = st.get(key) or []
+        if CSV_NEW < len(a) and isinstance(a[CSV_NEW], (int, float)) and a[CSV_NEW] > 0:
+            return int(a[CSV_NEW])
+    return None
+
+
 def month_series(by_month, months):
     """months（'YYYY-MM' の列）に合わせた配列。値がない月は直前の値を引き継ぐ。"""
     keys = sorted(by_month)

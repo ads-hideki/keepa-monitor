@@ -118,3 +118,29 @@ def test_distinguish_names_adds_a_differing_word_or_asin_tail():
     assert len(set(names)) == 4 and fams['P4']['name'] == '財布'
     assert fams['P2']['name'] == 'ショルダーバッグ ナイロン'
     assert all(n.startswith('ショルダーバッグ') for n in names[:3])
+
+
+def test_sold_estimate_uses_badge_then_rank_drops():
+    assert parse.sold_estimate({'monthlySold': 300, 'stats': {'salesRankDrops30': 80}}) == (300, 'badge')
+    assert parse.sold_estimate({'monthlySold': -1, 'stats': {'salesRankDrops30': 80}}) == (80, 'rank')
+    assert parse.sold_estimate({'stats': {'salesRankDrops30': 0}}) == (None, None)
+    assert parse.sold_estimate({}) == (None, None)
+
+
+def test_peak_sold_averages_the_best_three_months():
+    # 夏だけ売れる商品: 6〜8月に 2000 / 3000 / 1000、いまは表示なし
+    p = product('B0X', 't', sold=((120, 2000), (90, 3000), (60, 1000), (30, -1)))
+    assert parse.peak_sold(p, NOW.date()) == 2000
+    # 発売したばかり: 記録のある月だけで平均する（8月 300、9月 500、今月は 9月の値が続いている）
+    assert parse.peak_sold(product('B0Y', 't', sold=((40, 300), (10, 500))), NOW.date()) == 433
+    # 1 か月だけの山は 3 か月でならす
+    assert parse.peak_sold(product('B0Z', 't', sold=((300, -1), (60, 900), (30, -1))), NOW.date()) == 300
+    assert parse.peak_sold(product('B0N', 't', sold=None), NOW.date()) is None
+    assert parse.peak_sold(product('B0O', 't', sold=((500, 800), (450, -1))), NOW.date()) is None      # 1年より前の記録だけ
+
+
+def test_average_price_reads_90_day_average():
+    avg = [-1] * 5
+    avg[1] = 2480
+    assert parse.average_price({'stats': {'avg90': avg}}) == 2480
+    assert parse.average_price({'stats': {'avg90': [-1, -1]}}) is None

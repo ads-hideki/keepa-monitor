@@ -207,3 +207,5 @@ button:disabled,input:disabled{opacity:.55;cursor:default}
 .roots-l{display:flex;flex-wrap:wrap;gap:4px 16px}
 .tbl tr.sub-r > td{background:var(--bg);padding:8px 10px 12px}
 .tbl tr.sub-r .tbl td,.tbl tr.sub-r .tbl th{background:transparent}
+.tbl td.vd{min-width:136px}
+.tbl td.name .pills{margin-top:3px}

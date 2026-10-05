@@ -15,7 +15,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
 from . import dashboard, parse
-from .config import DEFAULT_RESEARCH, DEFAULT_THRESHOLDS
+from .config import DEFAULT_RESEARCH, DEFAULT_THRESHOLDS, MARKET_COHERENCE, MARKET_RULES
 from .keepa import KeepaError
 from .parse import CSV_NEW, CSV_RATING, CSV_REVIEWS, CSV_SALES, JST
 
@@ -43,6 +43,8 @@ MAX_DAILY_TRIES = 3
 RESEARCH_POOL = 300          # リサーチで候補として取る件数の上限
 MARKET_TOP = 20              # 市場 1 つにつき評価する上位商品の数
 MARKET_COMPARE = 6           # 比較用に調べる市場の数
+MARKET_KEYWORD_POOL = 30     # キーワードで集める市場 1 つにつき調べる商品の数
+MARKET_HISTORY_DAYS = 400    # 最盛期を見るために取る履歴の日数（トークンは変わらない）
 
 
 def _parse_time(iso):
@@ -562,82 +564,162 @@ class Run:
         return view
 
     # ------------------------------------------------------------------ 市場の評価
-    def market_item(self, target, prods, own_all, own_brands, band):
-        """市場（細かいカテゴリ）1 つの指標。売れ筋上位の商品から、市場の大きさと、上位の顔ぶれの強さを見る。
+    def _market_row(self, p, own_all, own_brands):
+        """商品 1 件を、市場の評価に使う値だけにする（履歴つきの商品データは大きいので持ち続けない）。"""
+        b = parse.brief(p)
+        sold, src = parse.sold_estimate(p)
+        peak = parse.peak_sold(p, self.today)
+        price = b['price'] or parse.average_price(p)
+        listed = p.get('listedSince')
+        months = None
+        if isinstance(listed, int) and listed > 0:
+            months = max(0, int((self.now - parse.to_dt(listed)).days / 30.4))
+        brand = (b['brand'] or '').strip()
+        return {
+            'asin': b['asin'], 'parent': b['parent'], 'title': b['title'][:60], 'brand': brand,
+            'price': b['price'], 'sold': sold, 'est': src == 'rank', 'peak': peak,
+            'rev': (price or 0) * (sold or 0),                            # いまの推定月商
+            'peakRev': (price or 0) * max(sold or 0, peak or 0),         # 最盛期の推定月商
+            'reviews': b['reviews'], 'rating': b['rating'], 'months': months,
+            'big': bool(b['amazonSells']) or (b['offers'] is not None and b['offers'] > self.th['maxOffersForPb']),
+            'amazon': bool(b['amazonSells']),
+            'own': b['asin'] in own_all or (brand.lower() in own_brands if brand else False),
+        }
 
-        推定月商 = 価格 × 月間販売数。月間販売数は「過去1か月で○点以上」の表示なので、下限の目安。
+    @staticmethod
+    def judge(m):
+        """狙い目の基準に合わない点を、短い言葉の一覧で返す（空なら狙い目）。"""
+        r, out = MARKET_RULES, []
+        if m['sizePeak'] < r['sizeMin']:
+            out.append('市場が小さい')
+        elif m['sizePeak'] > r['sizeMax']:
+            out.append('市場が大きすぎる')
+        if m['over'] > r['overMax']:
+            out.append('大型商品が多い')
+        if m['inBand'] < r['inBandMin']:
+            out.append('中規模の商品が少ない')
+        if m['amazon'] > r['amazonMax']:
+            out.append('Amazon本体の販売が多い')
+        if m['medReviews'] is not None and m['medReviews'] > r['reviewsMax']:
+            out.append('レビューが多い')
+        if m['newWinners'] < r['newMin']:
+            out.append('新しい成功例がない')
+        return out
+
+    def market_item(self, target, rows_by_asin, band):
+        """市場 1 つの指標。売れ筋上位の商品から、市場の大きさと、上位の顔ぶれの強さを見る。
+
+        推定月商 = 価格 × 月間販売数。月間販売数は「過去1か月で○点以上」の表示（なければランキングの動きからの推定）
+        なので、下限の目安。季節商品のために、過去12か月でよく売れた3か月の平均（最盛期）でも見る。
         """
         lo, hi = band
         rows, seen = [], set()
         for a in target['asins']:
-            p = prods.get(a)
-            if not p:
+            r = rows_by_asin.get(a)
+            if not r or r['parent'] in seen:                 # 色・サイズ違いは 1 件にまとめる
                 continue
-            b = parse.brief(p)
-            if b['parent'] in seen:                         # 色・サイズ違いは 1 件にまとめる
-                continue
-            seen.add(b['parent'])
-            rev = (b['price'] or 0) * (b['sold'] or 0)
-            listed = p.get('listedSince')
-            months = None
-            if isinstance(listed, int) and listed > 0:
-                months = max(0, int((self.now - parse.to_dt(listed)).days / 30.4))
-            brand = (b['brand'] or '').strip()
-            rows.append({
-                'asin': a, 'title': b['title'][:60], 'brand': brand, 'price': b['price'], 'sold': b['sold'], 'rev': rev,
-                'reviews': b['reviews'], 'rating': b['rating'], 'months': months,
-                'big': bool(b['amazonSells']) or (b['offers'] is not None and b['offers'] > self.th['maxOffersForPb']),
-                'amazon': bool(b['amazonSells']),
-                'own': a in own_all or (brand.lower() in own_brands if brand else False),
-            })
-            if len(rows) >= MARKET_TOP:
-                break
+            seen.add(r['parent'])
+            rows.append({k: v for k, v in r.items() if k != 'parent'})
+        if target.get('by') == 'keyword':                    # キーワードで集めた市場は売れ筋順が無いので、月商の大きい順
+            rows.sort(key=lambda r: -r['peakRev'])
+        rows = rows[:MARKET_TOP]
         top = rows[:10]
-        size = sum(r['rev'] for r in top)
+        size, size_peak = sum(r['rev'] for r in top), sum(r['peakRev'] for r in top)
         by_brand = Counter()
         for r in top:
-            by_brand[r['brand'] or '不明'] += r['rev']
+            by_brand[r['brand'] or '不明'] += r['peakRev']
         top_brand, top_rev = by_brand.most_common(1)[0] if by_brand else ('', 0)
-        return {
+        m = {
             'catId': str(target['catId']), 'name': target['name'], 'path': target.get('path') or [], 'kind': target['kind'],
-            'ownNames': target.get('ownNames') or [], 'n': len(rows),
-            'size': size,                                                      # 上位10商品の推定月商の合計
-            'inBand': sum(1 for r in rows if lo <= r['rev'] <= hi),            # 狙う範囲の月商の商品数
-            'over': sum(1 for r in rows if r['rev'] > hi),                     # 範囲を超える大型商品の数
+            'by': target.get('by') or 'category', 'ownNames': target.get('ownNames') or [], 'n': len(rows),
+            'size': size,                                                      # 上位10商品の推定月商の合計（いま）
+            'sizePeak': size_peak,                                             # 同（最盛期）
+            'seasonal': bool(size_peak) and size < size_peak * 0.5,            # いまは最盛期の半分以下 = 季節性がある
+            'inBand': sum(1 for r in rows if lo <= r['peakRev'] <= hi),        # 狙う範囲の月商の商品数
+            'over': sum(1 for r in rows if r['peakRev'] > hi),                 # 範囲を超える大型商品の数
             'big': sum(1 for r in top if r['big']),                            # 上位10のうち、Amazon本体が販売または出品者が多い商品
             'amazon': sum(1 for r in top if r['amazon']),
-            'topBrand': top_brand, 'topShare': round(100.0 * top_rev / size) if size else None,
+            'topBrand': top_brand, 'topShare': round(100.0 * top_rev / size_peak) if size_peak else None,
             'brands': len(by_brand),
+            'estimated': sum(1 for r in top if r['est']),                      # 上位10のうち、販売数を推定で補った商品
+            'unknown': sum(1 for r in top if not r['sold'] and not r['peak']), # 同、販売数が分からない商品
             'medReviews': _median([r['reviews'] for r in top if r['reviews'] is not None]),
             'medRating': _median([r['rating'] for r in top if r['rating'] is not None]),
             'medPrice': _median([r['price'] for r in top if r['price'] is not None]),
-            'newWinners': sum(1 for r in rows if r['months'] is not None and r['months'] <= 12 and r['rev'] >= lo),
-            'ownRev': sum(r['rev'] for r in rows if r['own']),
+            'newWinners': sum(1 for r in rows if r['months'] is not None and r['months'] <= 12 and r['peakRev'] >= lo),
+            'ownRev': sum(r['peakRev'] for r in rows if r['own']),
             'top': top,
         }
+        m['fails'] = self.judge(m)
+        return m
+
+    def _family_keywords(self, parent):
+        s = self.s_fam.get(parent) or {}
+        return [k for k in (s.get('kw') or []) if k] or [k for k in ((self.candidates.get(parent) or {}).get('kw') or []) if k]
+
+    def _known_titles(self):
+        """これまでの取得で分かっている商品名（ASIN → 商品名）。市場の決め方の判定に使い、新しく取得はしない。"""
+        out = {a: (v or {}).get('t') or '' for a, v in ((self.store.get('state/names') or {}).get('items') or {}).items()}
+        for it in (self.store.get('views/comps') or {}).get('items') or []:
+            out[it['asin']] = it.get('title') or ''
+        for doc in self.candidates.values():
+            for it in doc.get('items') or []:
+                out[it['asin']] = it.get('title') or ''
+        for f in self.families.values():
+            for a in set(f.get('asins') or []) | set(f.get('variations') or []):
+                out[a] = f.get('title') or ''
+        return out
+
+    def market_targets(self):
+        """自社商品ごとに、どの範囲を市場として見るかを決める。
+
+        基本は、いちばん細かいカテゴリの売れ筋。ただしカテゴリの上位が別の種類の商品ばかりのとき
+        （小物が、別の種類の商品のカテゴリに入っている、など）は、競合候補として集めた
+        「商品名にキーワードを含む商品」を市場とする。
+        """
+        titles = self._known_titles()
+        cats = self.store.list('cats')
+        by_cat, by_kw = {}, {}
+        for parent, f in sorted(self.families.items()):
+            c = f.get('cat') or {}
+            cid = str(c.get('id') or '')
+            doc = cats.get(cid) or {}
+            days = sorted(doc.get('top') or {})
+            ranking = doc['top'][days[-1]] if days else []
+            kw = self._family_keywords(parent)
+            known = [titles[a] for a in ranking[:10] if titles.get(a)]
+            share = (sum(1 for t in known if any(k in t for k in kw)) / float(len(known))) if kw and len(known) >= 5 else None
+            cand = [it['asin'] for g in ('rec', 'big') for it in ((self.candidates.get(parent) or {}).get('items') or []) if it.get('group') == g]
+            if ranking and (share is None or share >= MARKET_COHERENCE or not cand):
+                t = by_cat.setdefault(cid, {'catId': cid, 'name': doc.get('name') or c.get('name') or cid, 'kind': 'own', 'by': 'category',
+                                            'path': [x.get('name') or '' for x in f.get('cats') or []], 'ownNames': [],
+                                            'asins': ranking[:MARKET_TOP + 4]})
+                t['ownNames'].append(f['name'])
+            elif kw and cand:
+                key = kw[0].strip().lower()
+                t = by_kw.setdefault(key, {'catId': 'kw:' + key, 'name': kw[0].strip(), 'kind': 'own', 'by': 'keyword',
+                                           'path': ['キーワードで集計'], 'ownNames': [], 'asins': []})
+                t['ownNames'].append(f['name'])
+                for a in [f['rep']] + cand:
+                    if a not in t['asins'] and len(t['asins']) < MARKET_KEYWORD_POOL:
+                        t['asins'].append(a)
+        return list(by_cat.values()) + list(by_kw.values())
 
     def markets(self):
-        """市場の指標を作る。基準づくりとして、自社が参入している市場と、比較用の市場（直近のリサーチ結果に多く出た市場）を数値化する。"""
+        """市場の指標を作る。自社が参入している市場と、比較用の市場（直近のリサーチ結果に多く出た市場）を数値化し、
+        狙い目の基準に合うかを判定する。"""
         prm = self.research_params
         band = (prm['revMin'], prm['revMax'])
         own_all = set(self.own) | {a for f in self.families.values() for a in f['variations']}
         own_brands = {f['brand'].strip().lower() for f in self.families.values() if f.get('brand')}
-        path_of, own_names = {}, defaultdict(list)
-        for f in self.families.values():
-            c = f.get('cat') or {}
-            if c.get('id'):
-                path_of[str(c['id'])] = [x.get('name') or '' for x in f.get('cats') or []]
-                own_names[str(c['id'])].append(f['name'])
-        targets = []
-        for cid, doc in sorted(self.store.list('cats').items()):
-            days = sorted(doc.get('top') or {})
-            if cid in path_of and days:                     # 売れ筋は毎朝の取得で記録済みなので、取り直さない
-                targets.append({'catId': cid, 'name': doc.get('name') or cid, 'path': path_of[cid], 'kind': 'own',
-                                'ownNames': own_names[cid], 'asins': doc['top'][days[-1]][:MARKET_TOP + 4]})
+        if not self.candidates:
+            self.load_candidates()
+        targets = self.market_targets()
+        own_cats = {str((f.get('cat') or {}).get('id') or '') for f in self.families.values()}
         counts, info = Counter(), {}
         for it in (self.store.get('views/research') or {}).get('items') or []:
             c = it.get('cat') or {}
-            if c.get('id') and str(c['id']) not in path_of:
+            if c.get('id') and str(c['id']) not in own_cats:
                 counts[str(c['id'])] += 1
                 info[str(c['id'])] = (c.get('name') or '', it.get('root') or '')
         for cid, _ in counts.most_common(MARKET_COMPARE):
@@ -651,12 +733,26 @@ class Run:
                 targets.append({'catId': cid, 'name': name, 'path': [x for x in (root, name) if x], 'kind': 'compare',
                                 'asins': ranking[:MARKET_TOP + 4]})
         need = sorted({a for t in targets for a in t['asins']})
-        prods = self.keepa.products(need, history=False, rating=True, label='市場（商品）') if need else {}
-        items = [self.market_item(t, prods, own_all, own_brands, band) for t in targets]
-        items.sort(key=lambda m: (m['kind'] != 'own', -m['size']))
-        self.log('市場: {} 件を評価（自社が参入 {} / 比較 {}）'.format(
-            len(items), sum(1 for m in items if m['kind'] == 'own'), sum(1 for m in items if m['kind'] == 'compare')))
-        return {'updatedAt': self._wall().isoformat(), 'band': list(band), 'items': items}
+        rows = {}
+        for i in range(0, len(need), 100):                   # 履歴つきの商品データは大きいので、100 件ごとに必要な値だけ残す
+            try:
+                prods = self.keepa.products(need[i:i + 100], history=True, days=MARKET_HISTORY_DAYS, rating=True, label='市場（商品）')
+            except KeepaError as e:
+                self.warnings.append('市場の評価を途中で止めました。')
+                self.log('市場: 商品の取得を中断（{}）'.format(e))
+                break
+            for a, p in prods.items():
+                rows[a] = self._market_row(p, own_all, own_brands)
+        items = [m for m in (self.market_item(t, rows, band) for t in targets) if m['n']]
+        items.sort(key=lambda m: (m['kind'] != 'own', len(m['fails']), -m['sizePeak']))
+        n_badge = sum(1 for r in rows.values() if r['sold'] and not r['est'])
+        n_est = sum(1 for r in rows.values() if r['est'])
+        self.log('市場: {} 件を評価（自社が参入 {} うちキーワードで集計 {} / 比較 {}）。狙い目 {} 件'.format(
+            len(items), sum(1 for m in items if m['kind'] == 'own'), sum(1 for m in items if m['by'] == 'keyword'),
+            sum(1 for m in items if m['kind'] == 'compare'), sum(1 for m in items if not m['fails'])))
+        self.log('市場: 商品 {} 件のうち、販売数の表示あり {} / ランキングから推定 {} / 不明 {}'.format(
+            len(rows), n_badge, n_est, len(rows) - n_badge - n_est))
+        return {'updatedAt': self._wall().isoformat(), 'band': list(band), 'rules': dict(MARKET_RULES), 'items': items}
 
     # ------------------------------------------------------------------ 通知
     def alerts(self, own_items, comp_items, cat_items):
@@ -795,6 +891,7 @@ class Run:
             self.write_views('daily')
         if self.today.weekday() == 0 or not self.store.get('views/research'):
             self.store.set('views/research', self.research())
+            self.store.set('views/markets', self.markets())      # 週 1 回、リサーチのあとに市場も評価し直す
             self.write_views('daily')
 
     def job_prices(self):
