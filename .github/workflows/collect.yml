@@ -16,7 +16,7 @@ on:
       job:
         description: '実行するジョブ'
         type: choice
-        options: [auto, prices, daily, candidates, research]
+        options: [auto, prices, daily, candidates, research, markets]
         default: auto
 
 permissions:
