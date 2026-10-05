@@ -212,8 +212,10 @@ def test_candidate_limit_and_regenerate():
 def test_auto_runs_each_slot_once_and_skips_when_done():
     at = lambda h, m: NOW.replace(hour=h, minute=m)
     store = MemoryStore()
+    run, _, _, _, _ = make(store=store, now=at(19, 20) - timedelta(days=1))
+    run.job_daily()                                                  # 前日の夜までに取得済み
     run, _, http, _, _ = make(store=store, now=at(1, 30))
-    assert run.job_auto() == 'none' and not http.requests            # 2時より前は何もしない
+    assert run.job_auto() == 'none' and not http.requests            # 2時より前は、朝の取得を始めない
     run, _, _, _, _ = make(store=store, now=at(2, 7))
     assert run.job_auto() == 'daily' and store.get('views/overview')['job'] == 'daily'
     run, _, http, logs, _ = make(store=store, now=at(2, 37))
@@ -257,3 +259,29 @@ def test_auto_counts_manual_runs_and_gives_up_after_failures():
     run, _, http, logs, _ = make(store=store, now=at(4, 7))
     assert run.job_auto() == 'none' and not http.requests            # 4 回目は試さない
     assert any('失敗' in line for line in logs)
+
+
+def test_auto_trigger_arriving_after_midnight_covers_previous_evening():
+    at = lambda h, m: NOW.replace(hour=h, minute=m)
+    store = MemoryStore()
+    run, _, _, _, _ = make(store=store, now=at(15, 44) - timedelta(days=1))
+    run.job_daily()                                                  # 前日は 15:44 が最後の取得
+    run, _, _, logs, _ = make(store=store, now=at(0, 16))             # 19時の起動が日付をまたいで届いた
+    assert run.job_auto() == 'prices' and any('19時' in line for line in logs)
+    run, _, http, logs, _ = make(store=store, now=at(0, 47))
+    assert run.job_auto() == 'none' and not http.requests
+    assert any('次は 朝の取得' in line for line in logs)
+    run, _, _, _, _ = make(store=store, now=at(2, 7))
+    assert run.job_auto() == 'daily'
+
+
+def test_one_alert_per_competitor_even_when_watched_by_several_products():
+    run, store, _, _, _ = make()
+    run.job_daily()
+    comps = store.get('views/comps')['items']
+    doubled = comps + [dict(c, parent='B0OTHERPAR', ownName='別の自社商品') for c in comps]
+    alerts = run.alerts(store.get('views/own')['items'], doubled, store.get('views/cats')['items'])
+    base = run.alerts(store.get('views/own')['items'], comps, store.get('views/cats')['items'])
+    comp_types = ('drop', 'promo', 'stock')
+    assert sum(a['type'] in comp_types for a in alerts) == sum(a['type'] in comp_types for a in base)
+    assert any('ほか1商品' in a['sub'] for a in alerts if a['type'] in comp_types)

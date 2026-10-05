@@ -160,6 +160,7 @@ class Run:
                 'fp': fp, 'changedAt': changed_at, 'changeWhat': what,
                 'firstSeen': old.get('firstSeen') or self.iso,
             }
+        parse.distinguish_names(fams)
         self.store.set('state/families', {'updatedAt': self.now.isoformat(), 'items': fams})
         self.families = fams
         self.log('自社カタログ: {} ASIN を取得、{} 商品にまとめました'.format(len(prods), len(fams)))
@@ -486,14 +487,15 @@ class Run:
     # ------------------------------------------------------------------ 新商品リサーチ
     def research(self):
         prm = self.research_params
-        roots = sorted({f['cats'][0]['id'] for f in self.families.values() if f.get('cats') and f['cats'][0].get('id')})
-        view = {'updatedAt': self.now.isoformat(), 'params': prm, 'items': [], 'error': None}
+        # 大カテゴリでは範囲が広すぎて関係の薄い商品ばかりになるため、自社商品と同じ細かいカテゴリに絞る
+        roots = sorted({f['cat']['id'] for f in self.families.values() if f.get('cat') and f['cat'].get('id')})
+        view = {'updatedAt': self._wall().isoformat(), 'params': prm, 'items': [], 'error': None, 'cats': len(roots)}
         if not roots:
             view['error'] = '自社商品のカテゴリがまだ取得できていません'
             return view
         own_brands = {f['brand'].strip().lower() for f in self.families.values() if f.get('brand')}
         try:
-            selection = {'rootCategory': roots, 'current_NEW_gte': prm['priceMin'], 'current_NEW_lte': prm['priceMax'],
+            selection = {'categories_include': roots, 'current_NEW_gte': prm['priceMin'], 'current_NEW_lte': prm['priceMax'],
                          'monthlySold_gte': prm['soldMin'], 'current_COUNT_REVIEWS_lte': prm['reviewsMax'],
                          'current_SALES_gte': 1, 'current_SALES_lte': prm['rankMax'],
                          'perPage': 100, 'page': 0, 'sort': [['current_SALES', 'asc']]}
@@ -532,22 +534,34 @@ class Run:
         new_flags = {}
         own_price = {i['parent']: i.get('price') for i in own_items}
         yen = lambda v: '{:,}円'.format(int(v))
+        # 同じ競合を複数の自社商品で監視していても、通知は競合 1 件につき 1 つにまとめる
+        by_comp = {}
         for c in comp_items:
-            if c.get('pending'):
-                continue
-            name, acct, mine = c['title'] or c['asin'], c['acct'], own_price.get(c['parent'])
-            sub_own = '自社「{}」'.format(c['ownName'])
+            if not c.get('pending'):
+                by_comp.setdefault(c['asin'], []).append(c)
+        for asin, rows in by_comp.items():
+            c = rows[0]
+            name, acct = c['title'] or asin, c['acct']
+            owns = []
+            for r in rows:
+                if r['ownName'] not in owns:
+                    owns.append(r['ownName'])
+            sub_own = '自社「{}」'.format(owns[0]) + (' ほか{}商品'.format(len(owns) - 1) if len(owns) > 1 else '')
             if c.get('price') and c.get('prev') and c['price'] < c['prev'] and not c.get('deal'):
-                cheaper = mine is not None and c['price'] < mine
-                gap = '（自社 {} より {} 安い）'.format(yen(mine), yen(mine - c['price'])) if cheaper else ''
-                out.append({'sev': 'crit' if cheaper else 'warn', 'type': 'drop', 'tab': 'price', 'acct': acct,
+                mines = [(own_price.get(r['parent']), r['ownName']) for r in rows if own_price.get(r['parent']) is not None]
+                above = [(m, n) for m, n in mines if c['price'] < m]          # 競合より高い自社商品
+                gap = ''
+                if above:
+                    m, n = max(above)
+                    gap = '（自社「{}」{} より {} 安い）'.format(n, yen(m), yen(m - c['price']))
+                out.append({'sev': 'crit' if above else 'warn', 'type': 'drop', 'tab': 'price', 'acct': acct,
                             'text': '{} が {} → {} に値下げ'.format(name, yen(c['prev']), yen(c['price'])), 'sub': sub_own + 'の競合' + gap})
             if c.get('couponNew') and c.get('coupon'):
                 out.append({'sev': 'warn', 'type': 'promo', 'tab': 'price', 'acct': acct,
                             'text': '{} が {} クーポンを開始'.format(name, c['coupon']), 'sub': sub_own + 'の競合'})
             if c.get('deal'):
-                since = (flags.get(c['asin']) or {}).get('dealSince') or self.iso
-                new_flags[c['asin']] = {'dealSince': since}
+                since = (flags.get(asin) or {}).get('dealSince') or self.iso
+                new_flags[asin] = {'dealSince': since}
                 if self._days_since(since) <= 1:
                     out.append({'sev': 'warn', 'type': 'promo', 'tab': 'price', 'acct': acct,
                                 'text': '{} が{}を開始'.format(name, c['deal']), 'sub': sub_own + 'の競合'})
@@ -672,9 +686,12 @@ class Run:
         """
         own_at = _parse_time((self.store.get('views/own') or {}).get('updatedAt'))          # 朝の取得だけが更新する
         comps_at = _parse_time((self.store.get('views/comps') or {}).get('updatedAt'))      # 競合を取得するたびに更新する
+        start = DAILY_FROM[0] * 60 + DAILY_FROM[1]
         minute = self.now.hour * 60 + self.now.minute
-        daily_done = own_at is not None and own_at.date() == self.today
-        if minute >= DAILY_FROM[0] * 60 + DAILY_FROM[1] and not daily_done:
+        # 1 日の区切りは朝の取得の時刻。それより前に届いた起動は、前日の回の続きとして扱う
+        day = self.today if minute >= start else self.today - timedelta(days=1)
+        midnight = self.now.replace(hour=0, minute=0, second=0, microsecond=0) - (self.now.date() - day)
+        if minute >= start and not (own_at is not None and own_at.date() == self.today):
             st = self.store.get('state/schedule') or {}
             if st.get('date') != self.iso:
                 st = {'date': self.iso, 'tries': 0}
@@ -685,16 +702,19 @@ class Run:
                 self.job_daily()
                 return 'daily'
             self.log('予約実行: 朝の取得は今日 {} 回失敗しています。手動で確認してください'.format(st['tries']))
-        due = []
+        due, later = [], []
         for h, m in PRICE_SLOTS:
-            slot = self.now.replace(hour=h, minute=m, second=0, microsecond=0)
-            if self.now >= slot and (comps_at is None or comps_at < slot):
+            slot = midnight + timedelta(hours=h, minutes=m)
+            if self.now < slot:
+                later.append('{}時'.format(h))
+            elif comps_at is None or comps_at < slot:
                 due.append('{}時'.format(h))
         if due:
             self.log('予約実行: 競合の価格を取得します（{} の回）'.format('、'.join(due)))
             self.job_prices()
             return 'prices'
-        self.log('予約実行: いま実行するものはありません（今日の分は取得済み）')
+        self.log('予約実行: いま実行するものはありません（取得済み。次は {}）'.format(
+            later[0] + 'の回' if later else '朝の取得'))
         return 'none'
 
     def _wall(self):

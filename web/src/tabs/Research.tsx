@@ -31,7 +31,7 @@ export default function Research({ db }: { db: Db }) {
     <section className="card">
       <div>
         <h2>新商品リサーチ</h2>
-        <p className="sub">自社商品と同じ大カテゴリから、条件に合う商品を週に1回（月曜）抽出します。Amazon 本体が販売する商品、出品者の多い商品、自社の商品は結果から除いています。
+        <p className="sub">自社商品と同じカテゴリ（いちばん細かい分類）から、条件に合う商品を週に1回（月曜）抽出します。Amazon 本体が販売する商品、出品者の多い商品、自社の商品は結果から除いています。
           {r ? ` 前回の抽出は ${dateTime(r.updatedAt)}。` : ''}</p>
       </div>
       <form className="form" onSubmit={save}>

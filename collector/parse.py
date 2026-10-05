@@ -281,6 +281,29 @@ def short_name(title, brand=''):
     return (t[0] if len(t[0]) >= 8 or len(t) == 1 else t[0] + ' ' + t[1])[:28]
 
 
+def distinguish_names(fams):
+    """同じ表示名の商品が複数あるとき、商品名の中の違う語を足して区別する。違いが見つからなければ ASIN の末尾を付ける。
+
+    fams は {親ASIN: {'name', 'title', 'brand', 'rep', ...}}。'name' をその場で書き換える。
+    """
+    groups = {}
+    for key, f in fams.items():
+        groups.setdefault(f['name'], []).append(key)
+    for name, keys in groups.items():
+        if len(keys) < 2:
+            continue
+        toks = {k: [t for t in title_tokens(fams[k]['title'], fams[k]['brand']) if t not in name.split(' ')] for k in keys}
+        taken = set()
+        for k in sorted(keys):
+            others = [set(toks[o]) for o in keys if o != k]
+            extra = next((t for t in toks[k] if not all(t in o for o in others) and (name + ' ' + t) not in taken), None)
+            new = (name + ' ' + extra)[:34] if extra else None
+            if not new or new in taken:
+                new = '{}（{}）'.format(name, (fams[k].get('rep') or k)[-4:])
+            taken.add(new)
+            fams[k]['name'] = new
+
+
 def auto_keywords(title, brand, other_titles, lo=0.10, limit=2):
     """自社の商品名のうち、同じカテゴリの商品名にもよく出てくる語を、商品名の順に選ぶ。
     初期値として使い、画面で直せるようにする。"""

@@ -104,3 +104,17 @@ def test_mark_auto_skips_candidates_without_offer():
     items = [{'group': 'rec', 'price': None}, {'group': 'rec', 'price': 1000}, {'group': 'big', 'price': 900},
              {'group': 'rec', 'price': 1200}, {'group': 'rec', 'price': 1300}]
     assert [i['auto'] for i in mark_auto(items)] == [False, True, False, True, False]
+
+
+def test_distinguish_names_adds_a_differing_word_or_asin_tail():
+    fams = {
+        'P1': {'name': 'ショルダーバッグ', 'title': 'ブランド ショルダーバッグ レディース 本革 斜めがけ', 'brand': 'ブランド', 'rep': 'B0AAAA1111'},
+        'P2': {'name': 'ショルダーバッグ', 'title': 'ブランド ショルダーバッグ レディース ナイロン 軽量', 'brand': 'ブランド', 'rep': 'B0AAAA2222'},
+        'P3': {'name': 'ショルダーバッグ', 'title': 'ブランド ショルダーバッグ レディース 本革 斜めがけ', 'brand': 'ブランド', 'rep': 'B0AAAA3333'},
+        'P4': {'name': '財布', 'title': 'ブランド 財布 本革', 'brand': 'ブランド', 'rep': 'B0AAAA4444'},
+    }
+    parse.distinguish_names(fams)
+    names = [f['name'] for f in fams.values()]
+    assert len(set(names)) == 4 and fams['P4']['name'] == '財布'
+    assert fams['P2']['name'] == 'ショルダーバッグ ナイロン'
+    assert all(n.startswith('ショルダーバッグ') for n in names[:3])
