@@ -332,7 +332,7 @@ def test_markets_measures_own_and_comparison_markets():
     assert view['band'] == [300000, 5000000]
     by = {m['name']: m for m in view['items']}
     own, cmp_ = by['クッション'], by['プロテイン']
-    assert own['kind'] == 'own' and own['ownNames'] and cmp_['kind'] == 'compare'
+    assert own['kind'] == 'own' and own['ownNames'] and own['ownParents'] == ['B0PARENT01'] and cmp_['kind'] == 'compare'
     assert [path for path, q in http2.requests if path == 'bestsellers'] == ['bestsellers']      # 自社の市場は売れ筋を取り直さない
     # 自社の市場: 価格 3,000円前後 × 月 400点 = 月商 120万円前後の商品が並ぶ。大手は 1 件だけ
     assert own['inBand'] >= 5 and own['over'] == 0 and own['big'] == 1 and own['ownRev'] > 0
@@ -418,6 +418,38 @@ def test_products_sharing_proposals_form_one_market():
     assert wallet['name'] == '長財布 薄型' and wallet['ownNames'] == ['長財布 薄型', '小さい 長財布', '長財布 薄型']
     assert wallet['asins'][:3] == ['OWNP1', 'OWNP2', 'OWNP3'] and sorted(wallet['asins'][3:]) == list('ABCDEF')
     assert by['kw:P4']['asins'] == ['OWNP4', 'A', 'B', 'X', 'Y'] and by['kw:P4']['by'] == 'keyword'
+
+
+def test_sales_drop_is_not_reported_while_the_market_is_out_of_season():
+    # 自社商品の月間販売は 400 → 200 に減っている。ふだんは「販売数減少」として知らせる
+    run, store, _, _, _ = make()
+    run.job_daily()
+    own = {i['parent']: i for i in store.get('views/own')['items']}
+    assert own['B0PARENT01']['status']['label'] == '販売数減少' and not own['B0PARENT01']['seasonal']
+    assert any('月間販売' in a['text'] for a in store.get('views/overview')['alerts'])
+    name = own['B0PARENT01']['name']
+
+    # 市場の評価で、その商品の市場が「季節あり」（市場ごと売れ行きが落ちている）になった場合は知らせない
+    for market in ({'kind': 'own', 'seasonal': True, 'ownNames': [name], 'ownParents': ['B0PARENT01']},
+                   {'kind': 'own', 'seasonal': True, 'ownNames': [name]}):                # 以前の形式（商品の一覧がない）
+        st = MemoryStore()
+        st.set('views/research', {'items': [], 'updatedAt': 'x'})                        # 市場の評価をやり直さない日
+        st.set('views/markets', {'items': [market, {'kind': 'compare', 'seasonal': True, 'ownNames': []}]})
+        run2, st, _, _, _ = make(store=st)
+        run2.job_daily()
+        own = {i['parent']: i for i in st.get('views/own')['items']}
+        assert own['B0PARENT01']['seasonal'] and own['B0PARENT01']['status']['label'] != '販売数減少'
+        assert own['B0PARENT01']['sold30'] == 400 and own['B0PARENT01']['sold'] == 200          # 数字はそのまま見られる
+        assert not own['B0OWN00004']['seasonal'] and own['B0OWN00004']['status']['label'] == '評価低下'
+        assert not any('月間販売' in a['text'] for a in st.get('views/overview')['alerts'])
+
+    # 季節ありでない市場なら、これまでどおり知らせる
+    st = MemoryStore()
+    st.set('views/research', {'items': [], 'updatedAt': 'x'})
+    st.set('views/markets', {'items': [{'kind': 'own', 'seasonal': False, 'ownNames': [name], 'ownParents': ['B0PARENT01']}]})
+    run3, st, _, _, _ = make(store=st)
+    run3.job_daily()
+    assert {i['parent']: i for i in st.get('views/own')['items']}['B0PARENT01']['status']['label'] == '販売数減少'
 
 
 def test_market_verdict_lists_what_misses_the_rules():

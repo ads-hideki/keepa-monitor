@@ -51,6 +51,8 @@ export interface OwnItem {
   /** Amazon が表示する「過去1か月で○点以上購入」。色・サイズのうち、いちばん多い値 */
   sold: number | null;
   sold30?: number | null;
+  /** いまが季節外れの市場にいる商品。販売数減少の通知を出さない */
+  seasonal?: boolean;
   coupon: string | null;
   deal: string | null;
   changedAt: string | null;
@@ -192,6 +194,7 @@ export interface MarketItem {
   /** 市場の決め方。category = 細かいカテゴリの売れ筋、keyword = 競合の提案（なければ商品名にキーワードを含む商品）。keyword のときは path[0] に集計方法の名前が入る */
   by?: 'category' | 'keyword';
   ownNames: string[];
+  ownParents?: string[];
   n: number;
   size: number;
   sizePeak?: number;

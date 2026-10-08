@@ -51,6 +51,7 @@ export default function Catalog({ db, acct, label }: { db: Db; acct: string; lab
                     <td className="n">
                       {o.sold != null ? `${num(o.sold)}点以上` : <span className="mut">表示なし</span>}
                       {o.sold30 != null && <div className="cellsub">{sd === 0 ? '変化なし' : <><Arrow dir={sd} />{o.sold30 ? `${num(o.sold30)}点以上` : '表示なし'} から</>}</div>}
+                      {o.seasonal && <div className="cellsub">季節あり（減少は通知しない）</div>}
                     </td>
                     <td className="n">
                       {o.rank != null ? `${num(o.rank)}位` : <span className="mut">不明</span>}
@@ -81,7 +82,7 @@ export default function Catalog({ db, acct, label }: { db: Db; acct: string; lab
         <h2>通知の基準</h2>
         <ul className="notes">
           <li>評価低下: 30日前より 0.2 以上下がったとき</li>
-          <li>販売数減少: Amazon が表示する「過去1か月で○点以上購入」が、30日前の表示より 30% 以上減ったとき（30日前に 100点以上だった商品が対象。色・サイズのうち、いちばん多い値で見ます）</li>
+          <li>販売数減少: Amazon が表示する「過去1か月で○点以上購入」が、30日前の表示より 30% 以上減ったとき（30日前に 100点以上だった商品が対象。色・サイズのうち、いちばん多い値で見ます）。市場ごと売れ行きが落ちている「季節あり」の商品は、季節による減少なので通知しません</li>
           <li>ページ変更: タイトルまたはメイン画像が前回の取得時と違うとき（7日間表示）</li>
           <li>出品なしあり: 在庫があるのに出品が表示されていない色・サイズがあるとき</li>
         </ul>

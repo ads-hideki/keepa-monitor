@@ -196,8 +196,9 @@ class Run:
         if it.get('rating') is not None and it.get('rating30') is not None and it['rating30'] - it['rating'] >= th['ratingDrop'] - 1e-9:
             return {'sev': 'crit', 'label': '評価低下'}
         # ランキングは日々大きく動くので使わない。Amazon が表示する月間の購入数を、30日前の表示と比べる
+        # 市場ごと売れ行きが落ちる時期（季節あり）の商品は、季節による減少なので知らせない
         before = it.get('sold30') or 0
-        if before >= th['soldMin'] and (it.get('sold') or 0) <= before * (1 - th['soldDropPct'] / 100.0):
+        if not it.get('seasonal') and before >= th['soldMin'] and (it.get('sold') or 0) <= before * (1 - th['soldDropPct'] / 100.0):
             return {'sev': 'serious', 'label': '販売数減少'}
         if it.get('changedAt') and self._days_since(it['changedAt']) <= th['pageChangeDays']:
             return {'sev': 'warn', 'label': 'ページ変更'}
@@ -211,8 +212,25 @@ class Run:
         except (TypeError, ValueError):
             return 9999
 
+    def seasonal_parents(self):
+        """いまが季節外れの市場（市場の評価で「季節あり」となった市場）にいる自社商品。週 1 回の市場の評価の結果を使う。"""
+        out = set()
+        by_name = defaultdict(list)
+        for parent, fam in self.families.items():
+            by_name[fam['name']].append(parent)
+        for m in (self.store.get('views/markets') or {}).get('items') or []:
+            if m.get('kind') != 'own' or not m.get('seasonal'):
+                continue
+            if 'ownParents' in m:
+                out.update(m['ownParents'])
+            else:                                            # 以前の形式の評価結果には商品の一覧がないので、呼び名で対応づける
+                for name in m.get('ownNames') or []:
+                    out.update(by_name.get(name, []))
+        return out
+
     def own_view(self):
         items = []
+        seasonal = self.seasonal_parents()
         for parent, fam in self.families.items():
             rep = self.own_products.get(fam['rep'])
             if not rep:
@@ -238,7 +256,7 @@ class Run:
                 'rank': b['rank'], 'rankNow3': _mean(rank_long[-3:]), 'rank30': _mean(rank_long[:3]), 'rankHist': rank_hist,
                 'rating': b['rating'], 'rating30': (rating_old / 10.0) if rating_old is not None and rating_old >= 0 else None,
                 'reviews': b['reviews'], 'reviews30': parse.value_days_ago(rev_pts, days, self.today),
-                'sold': sold_now, 'sold30': max(sold_old) if sold_old else None,
+                'sold': sold_now, 'sold30': max(sold_old) if sold_old else None, 'seasonal': parent in seasonal,
                 'coupon': b['coupon'], 'deal': b['deal'],
                 'changedAt': fam.get('changedAt'), 'changeWhat': fam.get('changeWhat'), 'oos': len(oos),
             }
@@ -696,7 +714,8 @@ class Run:
         top_brand, top_rev = by_brand.most_common(1)[0] if by_brand else ('', 0)
         m = {
             'catId': str(target['catId']), 'name': target['name'], 'path': target.get('path') or [], 'kind': target['kind'],
-            'by': target.get('by') or 'category', 'ownNames': target.get('ownNames') or [], 'n': len(rows),
+            'by': target.get('by') or 'category', 'ownNames': target.get('ownNames') or [],
+            'ownParents': target.get('ownParents') or [], 'n': len(rows),
             'size': size,                                                      # 上位10商品の推定月商の合計（いま）
             'sizePeak': size_peak,                                             # 同（最盛期）
             'seasonal': bool(size_peak) and size < size_peak * 0.5,            # いまは最盛期の半分以下 = 季節性がある
@@ -773,16 +792,18 @@ class Run:
             pool, from_picks = self._market_pool(parent, f, cand)
             if ranking and (share is None or share >= MARKET_COHERENCE or len(pool) < 2):
                 t = by_cat.setdefault(cid, {'catId': cid, 'name': doc.get('name') or c.get('name') or cid, 'kind': 'own', 'by': 'category',
-                                            'path': [x.get('name') or '' for x in f.get('cats') or []], 'ownNames': [],
+                                            'path': [x.get('name') or '' for x in f.get('cats') or []], 'ownNames': [], 'ownParents': [],
                                             'asins': ranking[:MARKET_TOP + 4]})
                 t['ownNames'].append(f['name'])
+                t['ownParents'].append(parent)
             elif from_picks:
                 curated.append({'parent': parent, 'name': f['name'], 'pool': pool, 'picks': set(pool[1:])})
             elif kw and len(pool) >= 2:
                 key = '、'.join(k.strip().lower() for k in kw)           # 提案がない商品は、キーワードの組が同じものだけまとめる
                 t = by_kw.setdefault(key, {'catId': 'kw:' + parent, 'name': f['name'], 'kind': 'own', 'by': 'keyword',
-                                           'path': ['キーワードで集計'], 'ownNames': [], 'asins': []})
+                                           'path': ['キーワードで集計'], 'ownNames': [], 'ownParents': [], 'asins': []})
                 t['ownNames'].append(f['name'])
+                t['ownParents'].append(parent)
                 for a in pool:
                     if a not in t['asins'] and len(t['asins']) < MARKET_KEYWORD_POOL:
                         t['asins'].append(a)
@@ -815,7 +836,8 @@ class Run:
                     if k < len(m['pool']) and m['pool'][k] not in asins:
                         asins.append(m['pool'][k])
             out.append({'catId': 'kw:' + members[0]['parent'], 'name': name, 'kind': 'own', 'by': 'keyword',
-                        'path': ['競合の提案で集計'], 'ownNames': [m['name'] for m in members], 'asins': asins[:MARKET_KEYWORD_POOL]})
+                        'path': ['競合の提案で集計'], 'ownNames': [m['name'] for m in members],
+                        'ownParents': [m['parent'] for m in members], 'asins': asins[:MARKET_KEYWORD_POOL]})
         return out
 
     def markets(self):
