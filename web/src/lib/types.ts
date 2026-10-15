@@ -14,10 +14,21 @@ export interface Alert {
   n?: number;
 }
 
+/** 自社商品の良い変化（販売数の増加、評価の上昇、レビュー数の節目） */
+export interface Good {
+  type: 'sold' | 'rating' | 'reviews';
+  tab: TabId;
+  acct: string | null;
+  text: string;
+  sub?: string;
+}
+
 export interface Overview {
   updatedAt: string;
   job: string;
   alerts: Alert[];
+  /** 古いデータには無い */
+  goods?: Good[];
   warnings: string[];
   accounts: string[];
   counts: Record<string, number>;
@@ -51,6 +62,8 @@ export interface OwnItem {
   /** Amazon が表示する「過去1か月で○点以上購入」。色・サイズのうち、いちばん多い値 */
   sold: number | null;
   sold30?: number | null;
+  /** 7日前のレビュー数 */
+  reviews7?: number | null;
   /** いまが季節外れの市場にいる商品。販売数減少の通知を出さない */
   seasonal?: boolean;
   coupon: string | null;

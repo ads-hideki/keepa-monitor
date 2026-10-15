@@ -42,7 +42,7 @@ export default function Catalog({ db, acct, label }: { db: Db; acct: string; lab
                         </div>
                       </div>
                     </td>
-                    <td><Pill kind={o.status.sev}>{o.status.label}</Pill></td>
+                    <td><Pill kind={o.status.label === '正常' ? 'neutral' : o.status.sev}>{o.status.label}</Pill></td>
                     <td className="n">
                       {o.price != null ? yen(o.price) : <span className="mut">出品なし</span>}
                       {range && <div className="cellsub">{yen(o.priceMin!)}〜{yen(o.priceMax!)}</div>}
@@ -85,6 +85,7 @@ export default function Catalog({ db, acct, label }: { db: Db; acct: string; lab
           <li>販売数減少: Amazon が表示する「過去1か月で○点以上購入」が、30日前の表示より 30% 以上減ったとき（30日前に 100点以上だった商品が対象。色・サイズのうち、いちばん多い値で見ます）。市場ごと売れ行きが落ちている「季節あり」の商品は、季節による減少なので通知しません</li>
           <li>ページ変更: タイトルまたはメイン画像が前回の取得時と違うとき（7日間表示）</li>
           <li>出品なしあり: 在庫があるのに出品が表示されていない色・サイズがあるとき</li>
+          <li>販売数増加・評価アップ（良い変化）: 月間販売が30日前より 30% 以上増えたとき（表示がなかった商品は 100点以上になったとき）、評価が30日前より 0.2 以上上がったとき。概要の「良い変化」にも出ます</li>
         </ul>
         <p className="sub">ランキングは日ごとの上下が大きいので、通知には使っていません。購入数の表示は 50点・100点きざみの目安で、50点未満の商品には表示されません。</p>
       </section>

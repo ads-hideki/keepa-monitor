@@ -452,6 +452,42 @@ def test_sales_drop_is_not_reported_while_the_market_is_out_of_season():
     assert {i['parent']: i for i in st.get('views/own')['items']}['B0PARENT01']['status']['label'] == '販売数減少'
 
 
+def test_good_news_lists_sales_growth_rating_rise_and_review_milestones():
+    products, best, searches = world()
+    fam = ['B0OWN00001', 'B0OWN00002', 'B0OWN00003']
+    for a in fam:                       # 月間販売 100 → 300 点、レビューは 1 週間で 96 → 104 件（100 件を超えた）
+        products[a] = product(a, '自社ブランド 低反発 クッション 【説明】 椅子用 ' + a[-1], brand='自社ブランド', parent='B0PARENT01',
+                              variations=fam, price=((400, 2800),), sold=((60, 100), (10, 300)),
+                              reviews=((400, 90), (10, 96), (3, 104)), tree=TREE_A)
+    products['B0OWN00004'] = product('B0OWN00004', '自社ブランド カビ取り スプレー 強力', brand='自社ブランド', price=((400, 1480),),
+                                     rating=((400, 41), (2, 44)), sold=None, tree=TREE_B)        # 評価 4.1 → 4.4
+    run, store, _, logs, _ = make(http=FakeKeepaHttp(products, best, searches))
+    run.job_daily()
+    own = {i['parent']: i for i in store.get('views/own')['items']}
+    assert own['B0PARENT01']['status'] == {'sev': 'good', 'label': '販売数増加'}
+    assert own['B0OWN00004']['status'] == {'sev': 'good', 'label': '評価アップ'}
+    ov = store.get('views/overview')
+    goods = ov['goods']
+    assert [g['type'] for g in goods] == ['sold', 'rating', 'reviews']
+    assert goods[0]['text'].endswith('月間販売が 100点以上 → 300点以上 に増加') and goods[0]['tab'] == 'catalog' and goods[0]['acct']
+    assert goods[1]['text'].endswith('評価が 4.1 → 4.4 に上昇')
+    assert goods[2]['text'].endswith('レビューが 100件を超えました') and '+8件' in goods[2]['sub']
+    assert not any('評価が' in a['text'] or '月間販売' in a['text'] for a in ov['alerts'])   # 良い変化は通知には混ぜない
+    assert any('良い変化 3 件' in line for line in logs)
+
+
+def test_good_news_skips_small_or_unknown_changes():
+    from collector.pipeline import Run
+    run, _, _, _, _ = make()
+    base = {'name': 'X', 'acct': 'shop1', 'cmpDays': 30, 'rating': 4.3, 'rating30': 4.2, 'sold': 100, 'sold30': 100,
+            'reviews': 120, 'reviews7': 110}
+    assert run.good_news([base]) == []                                           # 小さな変化や据え置きは出さない
+    assert run.good_news([dict(base, sold=50, sold30=None)]) == []                # 表示が付いても 50 点では出さない
+    assert [g['type'] for g in run.good_news([dict(base, sold=100, sold30=None)])] == ['sold']
+    assert run.good_news([dict(base, reviews=120, reviews7=-1)]) == []            # レビュー数の記録がない
+    assert run.good_news([dict(base, cmpDays=None, sold=300, rating=4.6)]) == []  # 7 日比較だった古い版の一覧
+
+
 def test_market_verdict_lists_what_misses_the_rules():
     from collector.pipeline import Run
     good = {'sizePeak': 8000000, 'over': 1, 'inBand': 7, 'amazon': 0, 'medReviews': 120, 'newWinners': 2}

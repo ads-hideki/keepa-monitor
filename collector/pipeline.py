@@ -42,6 +42,7 @@ PRICE_SLOTS = ((10, 0), (14, 0), (19, 0))
 MAX_DAILY_TRIES = 3
 RESEARCH_POOL = 300          # リサーチで候補として取る件数の上限
 MARKET_TOP = 20              # 市場 1 つにつき評価する上位商品の数
+REVIEW_MILESTONES = (50, 100, 200, 300, 500, 1000, 2000, 3000, 5000, 10000)   # 「レビューが○件を超えた」と知らせる区切り
 DEAL_ALERTS_MAX = 5          # セール開始の通知がこれより多い日は、アカウントごとに 1 件にまとめる
 MARKET_COMPARE = 6           # 比較用に調べる市場の数
 MARKET_KEYWORD_POOL = 30     # カテゴリを使わない市場 1 つにつき調べる商品の数
@@ -204,7 +205,46 @@ class Run:
             return {'sev': 'warn', 'label': 'ページ変更'}
         if it.get('oos'):
             return {'sev': 'warn', 'label': '出品なしあり'}
+        if self._sold_up(it):
+            return {'sev': 'good', 'label': '販売数増加'}
+        if it.get('rating') is not None and it.get('rating30') is not None and it['rating'] - it['rating30'] >= th['ratingUp'] - 1e-9:
+            return {'sev': 'good', 'label': '評価アップ'}
         return {'sev': 'good', 'label': '正常'}
+
+    def _sold_up(self, it):
+        """月間販売（Amazon の購入数表示）が 30 日前より増えたか。表示がなかった商品は 100 点以上になったら増加とみなす。"""
+        before, now = it.get('sold30') or 0, it.get('sold') or 0
+        if not now:
+            return False
+        if before:
+            return now >= before * (1 + self.th['soldUpPct'] / 100.0)
+        return now >= self.th['soldMin']
+
+    def good_news(self, own_items):
+        """自社商品の良い変化（販売数の増加、評価の上昇、レビュー数の節目）。概要の「良い変化」に出す。"""
+        th, out = self.th, []
+        for it in own_items:
+            label, acct = '「{}」'.format(it['name']), it['acct']
+            cmp_text = '{}日前との比較'.format(it.get('cmpDays') or 30)
+            if it.get('cmpDays') and self._sold_up(it):            # 7 日比較だった古い版の一覧は使わない
+                before = '{:,}点以上'.format(it['sold30']) if it.get('sold30') else '表示なし'
+                ratio = it['sold'] / float(it['sold30']) if it.get('sold30') else 99
+                out.append({'type': 'sold', 'tab': 'catalog', 'acct': acct, 'rank': (0, -ratio),
+                            'text': '{}の月間販売が {} → {:,}点以上 に増加'.format(label, before, it['sold']),
+                            'sub': cmp_text + '（Amazon の購入数の表示）'})
+            if (it.get('cmpDays') and it.get('rating') is not None and it.get('rating30') is not None
+                    and it['rating'] - it['rating30'] >= th['ratingUp'] - 1e-9):
+                out.append({'type': 'rating', 'tab': 'catalog', 'acct': acct, 'rank': (1, it['rating30'] - it['rating']),
+                            'text': '{}の評価が {:.1f} → {:.1f} に上昇'.format(label, it['rating30'], it['rating']), 'sub': cmp_text})
+            now, week = it.get('reviews'), it.get('reviews7')
+            if now is not None and week is not None and week >= 0 and now >= 0:
+                passed = [m for m in REVIEW_MILESTONES if week < m <= now]
+                if passed:
+                    out.append({'type': 'reviews', 'tab': 'catalog', 'acct': acct, 'rank': (2, -passed[-1]),
+                                'text': '{}のレビューが {:,}件を超えました'.format(label, passed[-1]),
+                                'sub': 'いま {:,}件（この7日間で +{:,}件）'.format(now, now - week)})
+        out.sort(key=lambda g: g.pop('rank'))
+        return out
 
     def _days_since(self, iso):
         try:
@@ -256,6 +296,7 @@ class Run:
                 'rank': b['rank'], 'rankNow3': _mean(rank_long[-3:]), 'rank30': _mean(rank_long[:3]), 'rankHist': rank_hist,
                 'rating': b['rating'], 'rating30': (rating_old / 10.0) if rating_old is not None and rating_old >= 0 else None,
                 'reviews': b['reviews'], 'reviews30': parse.value_days_ago(rev_pts, days, self.today),
+                'reviews7': parse.value_days_ago(rev_pts, 7, self.today),
                 'sold': sold_now, 'sold30': max(sold_old) if sold_old else None, 'seasonal': parent in seasonal,
                 'coupon': b['coupon'], 'deal': b['deal'],
                 'changedAt': fam.get('changedAt'), 'changeWhat': fam.get('changeWhat'), 'oos': len(oos),
@@ -1034,13 +1075,14 @@ class Run:
         own_asins = sorted({a for a, e in self.own.items() if not e.get('gone')} | {a for f in self.families.values() for a in f['variations']})
         self.store.set('views/setup', {'updatedAt': now, 'items': self.setup_view(), 'ownAsins': own_asins})
         alerts = self.alerts(own_items, self.comp_items, cat_items)
+        goods = self.good_news(own_items)
         usage = self.store.get('state/usage') or {'days': {}}
         usage['days'][self.iso] = (usage['days'].get(self.iso) or 0) + self.keepa.spent - getattr(self, '_usage_written', 0)
         self._usage_written = self.keepa.spent
         usage['days'] = dict(sorted(usage['days'].items())[-60:])
         self.store.set('state/usage', usage)
         self.store.set('views/overview', {
-            'updatedAt': now, 'job': job, 'alerts': alerts, 'warnings': self.warnings, 'accounts': self.cfg.accounts,
+            'updatedAt': now, 'job': job, 'alerts': alerts, 'goods': goods, 'warnings': self.warnings, 'accounts': self.cfg.accounts,
             'counts': dict(Counter(a['type'] for a in alerts)),
             'monitor': {'families': len(self.families), 'asins': sum(len(f['asins']) for f in self.families.values()),
                         'competitors': len({c['asin'] for c in self.comp_items}),
@@ -1048,7 +1090,8 @@ class Run:
             'tokens': {'spent': self.keepa.spent, 'today': usage['days'][self.iso], 'left': self.keepa.tokens_left,
                        'rate': self.keepa.refill_rate, 'byLabel': self.keepa.by_label, 'days': usage['days']},
         })
-        self.log('画面用データを書き出しました（通知 {} 件 / 読み取り {} 回 / 書き込み {} 回）'.format(len(alerts), self.store.reads, self.store.writes))
+        self.log('画面用データを書き出しました（通知 {} 件 / 良い変化 {} 件 / 読み取り {} 回 / 書き込み {} 回）'.format(
+            len(alerts), len(goods), self.store.reads, self.store.writes))
 
     # ------------------------------------------------------------------ ジョブ
     def job_daily(self):

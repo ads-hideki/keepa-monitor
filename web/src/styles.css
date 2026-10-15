@@ -248,3 +248,9 @@ button:disabled,input:disabled{opacity:.55;cursor:default}
   #detail .tbl .why{display:none}
   .why-m{display:block}
 }
+
+/* 概要: 良い変化 */
+.tile-good{border-color:color-mix(in srgb,var(--good) 40%,var(--line));background:color-mix(in srgb,var(--good) 7%,var(--surface))}
+.tile-good .tile-v{color:color-mix(in srgb,var(--good) 75%,var(--ink))}
+.goods{scroll-margin-top:56px}
+.goods .al-p{flex-basis:80px}

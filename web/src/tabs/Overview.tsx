@@ -12,14 +12,19 @@ const TILES: [TabId, string, string][] = [
   ['catalog', '自社商品の異常', 'catalog'], ['category', 'カテゴリ新規参入', 'entrant'],
 ];
 const LIMIT = 12;
+const GOOD_LIMIT = 8;
+const GOOD_LABEL: Record<string, string> = { sold: '販売増', rating: '評価アップ', reviews: 'レビュー' };
 
 export default function Overview({ db, acct, go }: { db: Db; acct: string; go: (t: TabId) => void }) {
   const [all, setAll] = useState(false);
+  const [allGood, setAllGood] = useState(false);
   const ov = db.overview;
   if (!ov) return <section className="card"><p className="empty">まだ取得結果がありません。最初の取得が終わると表示されます。</p></section>;
   const alerts = ov.alerts.filter(a => acct === 'all' || !a.acct || a.acct === acct);
   const count = (t: string) => alerts.filter(a => a.type === t).reduce((sum, a) => sum + (a.n ?? 1), 0);   // まとめた通知は件数ぶん数える
   const shown = all ? alerts : alerts.slice(0, LIMIT);
+  const goods = (ov.goods || []).filter(g => acct === 'all' || !g.acct || g.acct === acct);
+  const goodShown = allGood ? goods : goods.slice(0, GOOD_LIMIT);
   const cap = (ov.tokens.rate || 25) * 60 * 24;
   const today = ov.tokens.today || 0;
   const stale = hoursSince(ov.updatedAt);
@@ -36,6 +41,10 @@ export default function Overview({ db, acct, go }: { db: Db; acct: string; go: (
             <span className="tile-v">{count(type)}<small>件</small></span>
           </button>
         ))}
+        <button className="tile tile-good" onClick={() => document.getElementById('goods')?.scrollIntoView({ block: 'start', behavior: 'smooth' })}>
+          <span className="tile-l">良い変化</span>
+          <span className="tile-v">{goods.length}<small>件</small></span>
+        </button>
       </div>
       <div className="cols">
         <section className="card grow">
@@ -61,6 +70,25 @@ export default function Overview({ db, acct, go }: { db: Db; acct: string; go: (
           )}
         </section>
         <div className="side">
+          <section className="card goods" id="goods">
+            <div><h2>良い変化</h2><p className="sub">自社商品の販売数の増加、評価の上昇（30日前との比較）、レビュー数の節目（この7日間）です。</p></div>
+            <ul className="alerts">
+              {goodShown.map((g, i) => (
+                <li key={i}>
+                  <div className="al-p"><Pill kind="good">{GOOD_LABEL[g.type] || '良い変化'}</Pill></div>
+                  <div className="al-b">
+                    <div className="al-t">{g.text}</div>
+                    {g.sub && <div className="al-s">{g.sub}</div>}
+                  </div>
+                </li>
+              ))}
+              {!goods.length && <li className="empty">{ov.goods ? 'いまは該当する変化はありません' : '次回の朝の取得から表示します'}</li>}
+            </ul>
+            {goods.length > GOOD_LIMIT && (
+              <button className="link more" onClick={() => setAllGood(v => !v)}>{allGood ? `上位${GOOD_LIMIT}件だけ表示` : `残り ${goods.length - GOOD_LIMIT}件を表示`}</button>
+            )}
+            {goods.length > 0 && <button className="link more" onClick={() => go('catalog')}>自社カタログを見る</button>}
+          </section>
           <section className="card">
             <div><h2>監視対象</h2><p className="sub">在庫または入荷予定のある自社商品です。全アカウントの合計。</p></div>
             <div className="kv">
