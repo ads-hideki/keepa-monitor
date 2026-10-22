@@ -254,3 +254,4 @@ button:disabled,input:disabled{opacity:.55;cursor:default}
 .tile-good .tile-v{color:color-mix(in srgb,var(--good) 75%,var(--ink))}
 .goods{scroll-margin-top:56px}
 .goods .al-p{flex-basis:80px}
+.stale{color:color-mix(in srgb,var(--serious) 80%,var(--ink))}

@@ -91,6 +91,10 @@ export interface CompItem {
   coupon?: string | null;
   couponNew?: boolean;
   deal?: string | null;
+  /** セールの終了日時（Keepa が持っている場合だけ。「10/17 23:59」の形） */
+  dealEnd?: string | null;
+  /** Keepa がこの商品のデータを最後に更新した時刻 */
+  seenAt?: string | null;
   stock: 'in' | 'out' | 'unknown';
   outDays?: number;
   strip?: string;

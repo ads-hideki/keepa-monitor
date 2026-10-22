@@ -152,3 +152,16 @@ def test_sold_at_reads_the_badge_shown_at_that_time():
     assert parse.sold_at(p, NOW - timedelta(days=30)) == 0          # その時点では表示がなかった
     assert parse.sold_at(p, NOW) == 200
     assert parse.sold_at(p, NOW - timedelta(days=90)) is None       # 記録が始まる前
+
+
+def test_deal_info_drops_ended_and_future_sales_and_marks_big_events():
+    from fakes import NOW, km
+    p = {'deals': [{'badge': 'プライム感謝祭セール', 'dealType': 'PRIME_DAY', 'endTime': km(NOW - timedelta(days=3))},
+                   {'badge': '終了まで: 20:03:57', 'startTime': km(NOW + timedelta(hours=2))}]}
+    assert parse.deal_info(p, NOW) is None                       # 終わったセールと、まだ始まっていないセール
+    assert parse.deal_text(p) == 'プライム感謝祭セール'            # 時刻を渡さなければ従来どおり
+    live = {'deals': [{'badge': 'プライム感謝祭先行セール', 'dealType': 'UNKNOWN', 'endTime': km(NOW + timedelta(days=1))}]}
+    info = parse.deal_info(live, NOW)
+    assert info['text'] == 'プライム感謝祭先行セール' and info['event'] and info['end'] > NOW
+    assert parse.deal_info({'deals': [{'badge': '終了まで: 1:02:03', 'dealType': 'LIMITED_TIME_DEAL'}]}, NOW) == \
+        {'text': 'タイムセール', 'end': None, 'event': False}

@@ -1,9 +1,14 @@
 import { useMemo, useState } from 'react';
 import LineChart, { DataTable, Legend, type Series } from '../components/LineChart';
 import { Arrow, matches, Pill, Price as PriceCell, ProductLink, SearchBox, Spark, Thumb } from '../components/ui';
-import { dayLabels, expand, priceOnly, yen, num } from '../lib/format';
+import { dayLabels, expand, hoursSince, priceOnly, yen, num } from '../lib/format';
 import type { CompItem, Db } from '../lib/types';
 
+/** Keepa のデータが 1 日以上更新されていない競合には、そのことを添える（価格やセールの表示が古い可能性がある） */
+const stale = (c: CompItem) => {
+  const h = hoursSince(c.seenAt ?? undefined);
+  return h != null && h >= 24 ? <span className="stale">・Keepa の更新 {Math.floor(h / 24)}日前</span> : null;
+};
 const changed = (c: CompItem) => (c.price != null && c.prev != null && c.price !== c.prev) || !!c.couponNew || !!c.deal;
 const order = (c: CompItem) => (c.price != null && c.prev != null && c.price < c.prev && !c.deal ? 0 : c.deal ? 1 : c.couponNew ? 2 : c.price != null && c.prev != null && c.price > c.prev ? 3 : 4);
 const key = (c: CompItem) => `${c.parent}/${c.asin}`;
@@ -45,7 +50,8 @@ export default function Price({ db, acct, label }: { db: Db; acct: string; label
           <div>
             <h2>競合の価格・販促</h2>
             <p className="sub">監視中の競合 {list.length}件のうち {shown.length}件を表示。商品名を押すと下に価格推移を表示します。
-              {pending > 0 && ` ほかに ${pending}件が次回の取得待ちです。`}</p>
+              {pending > 0 && ` ほかに ${pending}件が次回の取得待ちです。`}
+              {' '}セールの表示は Keepa の情報です。終了日時を過ぎたものと、プライム感謝祭などの大型セールで 10日を超えて表示が残っているものは、終わったとみなして出しません。</p>
           </div>
           <div className="form">
             <SearchBox value={q} onChange={setQ} />
@@ -67,7 +73,7 @@ export default function Price({ db, acct, label }: { db: Db; acct: string; label
                         <Thumb src={c.image} />
                         <div>
                           <button className="rowbtn" aria-pressed={current ? key(c) === key(current) : false} onClick={() => setSel(key(c))}>{c.title}</button>
-                          <div className="cellsub">{c.brand || 'ブランド不明'}・<ProductLink asin={c.asin}>{c.asin}</ProductLink>・対 {c.ownName}（{label(c.acct)}）</div>
+                          <div className="cellsub">{c.brand || 'ブランド不明'}・<ProductLink asin={c.asin}>{c.asin}</ProductLink>・対 {c.ownName}（{label(c.acct)}）{stale(c)}</div>
                         </div>
                       </div>
                     </td>
@@ -81,6 +87,7 @@ export default function Price({ db, acct, label }: { db: Db; acct: string; label
                           {c.deal && <Pill kind="warn">{c.deal}</Pill>}
                         </div>
                       ) : <span className="mut">なし</span>}
+                      {c.deal && c.dealEnd && <div className="cellsub">{c.dealEnd} まで</div>}
                     </td>
                     <td><Spark data={expand(c.hist, 90)} step /></td>
                   </tr>

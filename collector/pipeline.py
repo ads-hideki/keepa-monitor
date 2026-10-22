@@ -43,6 +43,8 @@ MAX_DAILY_TRIES = 3
 RESEARCH_POOL = 300          # リサーチで候補として取る件数の上限
 MARKET_TOP = 20              # 市場 1 つにつき評価する上位商品の数
 REVIEW_MILESTONES = (50, 100, 200, 300, 500, 1000, 2000, 3000, 5000, 10000)   # 「レビューが○件を超えた」と知らせる区切り
+EVENT_DEAL_MAX_DAYS = 10      # 大型セール（プライム感謝祭など）の表示がこれより長く続いたら、終わったものとみなす
+STALE_HOURS = 24              # Keepa のデータがこれより古い競合は、画面に「更新が古い」と出す
 DEAL_ALERTS_MAX = 5          # セール開始の通知がこれより多い日は、アカウントごとに 1 件にまとめる
 MARKET_COMPARE = 6           # 比較用に調べる市場の数
 MARKET_KEYWORD_POOL = 30     # カテゴリを使わない市場 1 つにつき調べる商品の数
@@ -323,7 +325,8 @@ class Run:
         if need:
             self.comp_products.update(self.keepa.products(need, history=True, days=days, rating=rating, label='競合'))
         prev = {(i.get('parent'), i.get('asin')): i for i in (previous or [])}
-        items = []
+        flags = (self.store.get('state/flags') or {}).get('items') or {}
+        items, n_end, n_stale, n_old = [], 0, 0, 0
         for parent, asin, manual, auto in pairs:
             fam = self.families[parent]
             base = {'asin': asin, 'parent': parent, 'acct': fam['account'], 'ownName': fam['name'], 'manual': manual, 'auto': auto}
@@ -339,10 +342,20 @@ class Run:
             prev_price = before if before and before > 0 else None
             out = b['price'] is None
             old = prev.get((parent, asin)) or {}
+            deal, deal_end, deal_raw = self._deal(p, flags.get(asin) or {})
+            if deal_end:
+                n_end += 1
+            if deal_raw and not deal:
+                n_stale += 1
+            seen = parse.to_dt(p['lastUpdate']) if isinstance(p.get('lastUpdate'), int) and p['lastUpdate'] > 0 else None
+            if seen and (self.now - seen).total_seconds() > STALE_HOURS * 3600:
+                n_old += 1
             base.update({
                 'title': b['title'][:80], 'brand': b['brand'], 'image': b['image'],
                 'price': b['price'], 'prev': prev_price, 'hist': parse.compress(d90),
-                'coupon': b['coupon'], 'couponNew': parse.coupon_started_recently(p, self.now), 'deal': b['deal'],
+                'coupon': b['coupon'], 'couponNew': parse.coupon_started_recently(p, self.now),
+                'deal': deal, 'dealEnd': deal_end, 'dealRaw': deal_raw,
+                'seenAt': seen.isoformat() if seen else None,
                 'stock': 'out' if out else 'in', 'outDays': parse.out_of_stock_days(p, self.today) if out else 0,
                 'strip': ''.join('2' if v == -1 else '0' for v in d90[-30:]),
                 'rating': b['rating'] if b['rating'] is not None else old.get('rating'),
@@ -352,7 +365,25 @@ class Run:
             items.append(base)
         self.comp_items = items
         self.log('競合: {} 件（商品との組み合わせ {} 件）'.format(len({a for _, a, _, _ in pairs}), len(items)))
+        self.log('競合のセール表示: 終了日時あり {} / 終わったとみなして外した大型セール {} / Keepa の更新が{}時間以上前 {}'.format(
+            n_end, n_stale, STALE_HOURS, n_old))
         return items
+
+    def _deal(self, p, flag):
+        """競合のいまのセール。(表示名, 終了日時の文字, Keepa の表示名) を返す。
+
+        終了日時を過ぎたセールは出さない。終了日時の無い大型セール（プライム感謝祭など）は、
+        EVENT_DEAL_MAX_DAYS 日より長く同じ表示が続いたら、終わったのに表示が残っているとみなして出さない。
+        """
+        info = parse.deal_info(p, self.now)
+        if not info:
+            return None, None, None
+        end = info['end'].strftime('%m/%d %H:%M') if info['end'] else None
+        if info['event'] and not info['end']:
+            since = flag.get('dealSince') if flag.get('badge') in (None, info['text']) else None
+            if since and self._days_since(since) > EVENT_DEAL_MAX_DAYS:
+                return None, None, info['text']
+        return info['text'], end, info['text']
 
     # ------------------------------------------------------------------ カテゴリ順位
     def ranking(self, cat_id):
@@ -990,13 +1021,18 @@ class Run:
             if c.get('couponNew') and c.get('coupon'):
                 out.append({'sev': 'warn', 'type': 'promo', 'tab': 'price', 'acct': acct,
                             'text': '{} が {} クーポンを開始'.format(name, c['coupon']), 'sub': sub_own + 'の競合'})
-            if c.get('deal'):
+            shown = c.get('dealRaw') or c.get('deal')       # 終わったとみなして画面に出さないセールも、続いた日数は数え続ける
+            if shown:
                 old_flag = flags.get(asin) or {}
-                since = old_flag.get('dealSince') or self.iso
+                same = old_flag.get('badge') in (None, shown)    # 表示名が変わったら、新しいセールとして数え直す
+                since = (old_flag.get('dealSince') if same else None) or self.iso
                 quiet = bool(old_flag.get('quiet')) if old_flag else (known is None or asin not in known)
                 if known is None:
                     quiet = True
-                new_flags[asin] = {'dealSince': since, 'quiet': quiet}
+                new_flags[asin] = {'dealSince': since, 'quiet': quiet, 'badge': shown}
+            if c.get('deal'):
+                since = new_flags[asin]['dealSince']
+                quiet = new_flags[asin]['quiet']
                 if self._days_since(since) <= 1 and not quiet:
                     out.append({'sev': 'warn', 'type': 'promo', 'tab': 'price', 'acct': acct, 'deal': True,
                                 'text': '{} が{}を開始'.format(name, c['deal']), 'sub': sub_own + 'の競合'})

@@ -488,6 +488,33 @@ def test_good_news_skips_small_or_unknown_changes():
     assert run.good_news([dict(base, cmpDays=None, sold=300, rating=4.6)]) == []  # 7 日比較だった古い版の一覧
 
 
+def test_sales_that_already_ended_are_not_shown():
+    products, best, searches = world()
+    # 1 件は終了日時を過ぎたセール、1 件は終了日時の無い大型セール（15 日前から表示が続いている）
+    products['B0SPR00001']['deals'] = [{'badge': 'プライム感謝祭セール', 'dealType': 'PRIME_DAY', 'endTime': km(NOW - timedelta(days=2))}]
+    products['B0SPR00002']['deals'] = [{'badge': 'プライム感謝祭先行セール', 'dealType': 'PRIME_DAY_EARLY'}]
+    store = MemoryStore()
+    store.set('settings/families', {'items': {'B0OWN00004': {'competitors': {'B0SPR00001': {'on': True}, 'B0SPR00002': {'on': True}}}}})
+    since = (NOW - timedelta(days=15)).strftime('%Y-%m-%d')
+    store.set('state/flags', {'items': {'B0SPR00002': {'dealSince': since, 'quiet': False}}, 'known': ['B0SPR00002']})
+    run, store, _, logs, _ = make(store=store, http=FakeKeepaHttp(products, best, searches))
+    run.job_daily()
+    comps = {c['asin']: c for c in store.get('views/comps')['items']}
+    assert comps['B0SPR00001']['deal'] is None and comps['B0SPR00001']['dealRaw'] is None
+    assert comps['B0SPR00002']['deal'] is None and comps['B0SPR00002']['dealRaw'] == 'プライム感謝祭先行セール'
+    assert not any('セール' in a['text'] and '開始' in a['text'] for a in store.get('views/overview')['alerts'])
+    flag = store.get('state/flags')['items']['B0SPR00002']
+    assert flag['dealSince'] == since and flag['badge'] == 'プライム感謝祭先行セール'      # 日数は数え続ける
+    assert any('終わったとみなして外した大型セール 1' in line for line in logs)
+
+    # 表示名が変わったら新しいセールとして扱い、出す
+    products['B0SPR00002']['deals'] = [{'badge': 'ブラックフライデーセール', 'dealType': 'SPECIAL_EVENT_SALE'}]
+    run2, store, _, _, _ = make(store=store, http=FakeKeepaHttp(products, best, searches))
+    run2.job_daily()
+    assert {c['asin']: c for c in store.get('views/comps')['items']}['B0SPR00002']['deal'] == 'ブラックフライデーセール'
+    assert store.get('state/flags')['items']['B0SPR00002']['dealSince'] == NOW.strftime('%Y-%m-%d')
+
+
 def test_market_verdict_lists_what_misses_the_rules():
     from collector.pipeline import Run
     good = {'sizePeak': 8000000, 'over': 1, 'inBand': 7, 'amazon': 0, 'medReviews': 120, 'newWinners': 2}

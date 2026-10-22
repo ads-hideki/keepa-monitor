@@ -121,17 +121,39 @@ def coupon_started_recently(p, now, hours=36):
 _COUNTDOWN = re.compile(r'\d{1,2}:\d{2}')
 
 
-def deal_text(p):
-    """セールの表示名。残り時間つきのバッジ（「終了まで: 20:03:57」など）は「タイムセール」にまとめる。"""
+# 期間の決まった大型セール。Keepa の deals に終了日時が無いことがあり、終わったあとも表示が残ることがある
+EVENT_DEAL_TYPES = {'PRIME_DAY', 'PRIME_DAY_EARLY', 'EARLY_ACCESS_WITH_PRIME', 'SPECIAL_EVENT_SALE'}
+EVENT_DEAL_WORDS = ('プライムデー', 'プライム感謝祭', 'ブラックフライデー', 'サイバーマンデー', '初売り', '新生活', 'スマイルSALE')
+
+
+def deal_info(p, now=None):
+    """いま有効なセール。{'text': 表示名, 'end': 終了日時 or None, 'event': 期間の決まった大型セールか}。無ければ None。
+
+    残り時間つきのバッジ（「終了まで: 20:03:57」など）は「タイムセール」にまとめる。
+    now を渡すと、終了日時を過ぎたもの・まだ始まっていないものは除く。
+    """
     for d in p.get('deals') or []:
-        if isinstance(d, dict):
-            badge = (d.get('badge') or '').strip()
-            if not badge:
-                return 'セール'
-            if badge.startswith('終了まで') or _COUNTDOWN.search(badge):
-                return 'タイムセール'
-            return badge
+        if not isinstance(d, dict):
+            continue
+        end = to_dt(d['endTime']) if isinstance(d.get('endTime'), int) and d['endTime'] > 0 else None
+        start = to_dt(d['startTime']) if isinstance(d.get('startTime'), int) and d['startTime'] > 0 else None
+        if now is not None and ((end and end <= now) or (start and start > now)):
+            continue
+        badge = (d.get('badge') or '').strip()
+        if not badge:
+            text = 'セール'
+        elif badge.startswith('終了まで') or _COUNTDOWN.search(badge):
+            text = 'タイムセール'
+        else:
+            text = badge
+        event = (d.get('dealType') or '') in EVENT_DEAL_TYPES or any(w in badge for w in EVENT_DEAL_WORDS)
+        return {'text': text, 'end': end, 'event': event}
     return None
+
+
+def deal_text(p, now=None):
+    info = deal_info(p, now)
+    return info['text'] if info else None
 
 
 def variation_asins(p):
