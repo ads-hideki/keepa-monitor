@@ -507,6 +507,14 @@ def test_sales_that_already_ended_are_not_shown():
     assert flag['dealSince'] == since and flag['badge'] == 'プライム感謝祭先行セール'      # 日数は数え続ける
     assert any('終わったとみなして外した大型セール 1' in line for line in logs)
 
+    # 同じ大型セールが別の競合で最近見え始めても、その表示名が最初に見えた日から数える
+    products['B0SPR00001']['deals'] = [{'badge': 'プライム感謝祭先行セール', 'dealType': 'PRIME_DAY_EARLY'}]
+    run1, store, _, logs1, _ = make(store=store, http=FakeKeepaHttp(products, best, searches))
+    run1.job_daily()
+    comps = {c['asin']: c for c in store.get('views/comps')['items']}
+    assert comps['B0SPR00001']['deal'] is None and comps['B0SPR00001']['dealRaw'] == 'プライム感謝祭先行セール'
+    assert any('最初に見えた日: プライム感謝祭先行セール ' + since in line for line in logs1)
+
     # 表示名が変わったら新しいセールとして扱い、出す
     products['B0SPR00002']['deals'] = [{'badge': 'ブラックフライデーセール', 'dealType': 'SPECIAL_EVENT_SALE'}]
     run2, store, _, _, _ = make(store=store, http=FakeKeepaHttp(products, best, searches))

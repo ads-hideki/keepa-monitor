@@ -43,7 +43,8 @@ MAX_DAILY_TRIES = 3
 RESEARCH_POOL = 300          # リサーチで候補として取る件数の上限
 MARKET_TOP = 20              # 市場 1 つにつき評価する上位商品の数
 REVIEW_MILESTONES = (50, 100, 200, 300, 500, 1000, 2000, 3000, 5000, 10000)   # 「レビューが○件を超えた」と知らせる区切り
-EVENT_DEAL_MAX_DAYS = 10      # 大型セール（プライム感謝祭など）の表示がこれより長く続いたら、終わったものとみなす
+EVENT_DEAL_MAX_DAYS = 10      # 大型セール（プライム感謝祭など）の表示が、最初に見えた日からこれより長く続いたら、終わったものとみなす
+EVENT_LOOKBACK_DAYS = 60      # 大型セールが最初に見えた日を、これより前の記録からは探さない（翌年の同じ名前のセールと混ぜない）
 STALE_HOURS = 24              # Keepa のデータがこれより古い競合は、画面に「更新が古い」と出す
 DEAL_ALERTS_MAX = 5          # セール開始の通知がこれより多い日は、アカウントごとに 1 件にまとめる
 MARKET_COMPARE = 6           # 比較用に調べる市場の数
@@ -326,6 +327,12 @@ class Run:
             self.comp_products.update(self.keepa.products(need, history=True, days=days, rating=rating, label='競合'))
         prev = {(i.get('parent'), i.get('asin')): i for i in (previous or [])}
         flags = (self.store.get('state/flags') or {}).get('items') or {}
+        # 大型セールは多くの商品で同時に始まって同時に終わるので、表示名ごとに「どの競合かで最初に見えた日」を使う
+        self._event_first = {}
+        for f in flags.values():
+            badge, since = (f or {}).get('badge'), (f or {}).get('dealSince')
+            if badge and since and self._days_since(since) <= EVENT_LOOKBACK_DAYS:
+                self._event_first[badge] = min(since, self._event_first.get(badge, since))
         items, n_end, n_stale, n_old = [], 0, 0, 0
         for parent, asin, manual, auto in pairs:
             fam = self.families[parent]
@@ -367,20 +374,24 @@ class Run:
         self.log('競合: {} 件（商品との組み合わせ {} 件）'.format(len({a for _, a, _, _ in pairs}), len(items)))
         self.log('競合のセール表示: 終了日時あり {} / 終わったとみなして外した大型セール {} / Keepa の更新が{}時間以上前 {}'.format(
             n_end, n_stale, STALE_HOURS, n_old))
+        if self._event_first:
+            self.log('大型セールが最初に見えた日: ' + '、'.join('{} {}'.format(k, v) for k, v in sorted(self._event_first.items())))
         return items
 
     def _deal(self, p, flag):
         """競合のいまのセール。(表示名, 終了日時の文字, Keepa の表示名) を返す。
 
-        終了日時を過ぎたセールは出さない。終了日時の無い大型セール（プライム感謝祭など）は、
-        EVENT_DEAL_MAX_DAYS 日より長く同じ表示が続いたら、終わったのに表示が残っているとみなして出さない。
+        終了日時を過ぎたセールは出さない。終了日時の無い大型セール（プライム感謝祭など）は、その表示名が
+        どれかの競合で最初に見えた日から EVENT_DEAL_MAX_DAYS 日を過ぎたら、終わったのに表示が残っているとみなして出さない。
         """
         info = parse.deal_info(p, self.now)
         if not info:
             return None, None, None
         end = info['end'].strftime('%m/%d %H:%M') if info['end'] else None
         if info['event'] and not info['end']:
-            since = flag.get('dealSince') if flag.get('badge') in (None, info['text']) else None
+            own = flag.get('dealSince') if flag.get('badge') in (None, info['text']) else None
+            first = getattr(self, '_event_first', {}).get(info['text'])
+            since = min([d for d in (own, first) if d] or [None]) if (own or first) else None
             if since and self._days_since(since) > EVENT_DEAL_MAX_DAYS:
                 return None, None, info['text']
         return info['text'], end, info['text']
