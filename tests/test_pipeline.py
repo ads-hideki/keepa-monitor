@@ -534,6 +534,26 @@ def test_sales_that_already_ended_are_not_shown():
     assert store.get('state/flags')['items']['B0SPR00002']['dealSince'] == NOW.strftime('%Y-%m-%d')
 
 
+def test_coupons_are_read_with_offers_for_own_products_and_competitors():
+    products, best, searches = world()
+    for a in ('B0OWN00001', 'B0OWN00002', 'B0OWN00003'):
+        products[a]['liveCoupon'] = [-10, 0]            # 出品者情報を取らないと、クーポンなしのまま見える
+    products['B0OWN00004']['liveCoupon'] = [300, 0]
+    products['B0SPR00001']['liveCoupon'] = [-15, 0]
+    store = MemoryStore()
+    store.set('settings/families', {'items': {'B0OWN00004': {'competitors': {'B0SPR00001': {'on': True}}}}})
+    http = FakeKeepaHttp(products, best, searches)
+    run, store, _, logs, _ = make(store=store, http=http)
+    run.job_daily()
+    own = {i['parent']: i for i in store.get('views/own')['items']}
+    assert own['B0PARENT01']['coupon'] == '10%OFF' and own['B0OWN00004']['coupon'] == '300円OFF'
+    assert {c['asin']: c for c in store.get('views/comps')['items']}['B0SPR00001']['coupon'] == '15%OFF'
+    with_offers = [q for path, q in http.requests if path == 'product' and q.get('offers')]
+    assert with_offers and all(q['offers'] == '20' and q['only_live_offers'] == '1' for q in with_offers)
+    assert all(len(q['asin'].split(',')) <= 20 for q in with_offers)
+    assert any('自社のクーポン: 2 商品中 2 商品にクーポンあり' in line for line in logs)
+
+
 def test_market_verdict_lists_what_misses_the_rules():
     from collector.pipeline import Run
     good = {'sizePeak': 8000000, 'over': 1, 'inBand': 7, 'amazon': 0, 'medReviews': 120, 'newWinners': 2}

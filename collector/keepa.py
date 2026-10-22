@@ -16,6 +16,8 @@ import urllib.request
 BASE = 'https://api.keepa.com/'
 DOMAIN_JP = 5
 BATCH = 100
+OFFERS_BATCH = 20      # 出品者情報（offers）も取るときは、1 回に 20 件まで
+OFFERS_COST = 6        # 出品者情報 1 ページ（10 件）あたりの追加トークンの見込み。待ち時間の見積もりに使う
 
 
 class KeepaError(Exception):
@@ -130,17 +132,25 @@ class Keepa:
         raise KeepaError('{}: トークン不足が続いたため中断しました'.format(label))
 
     # ---- 公開メソッド ----
-    def products(self, asins, history=False, days=None, rating=True, stats=90, label='商品'):
-        """ASIN → 商品オブジェクト の辞書を返す。100件ずつに分けて取得する。"""
+    def products(self, asins, history=False, days=None, rating=True, stats=90, label='商品', offers=False):
+        """ASIN → 商品オブジェクト の辞書を返す。100件ずつ（出品者情報も取るときは20件ずつ）に分けて取得する。
+
+        offers=True のときは出品者情報も取る。Keepa のクーポン情報は、出品者情報を取ったときにだけ更新されるため。
+        """
         asins = list(dict.fromkeys(a for a in asins if a))
         out = {}
-        for i in range(0, len(asins), BATCH):
-            chunk = asins[i:i + BATCH]
+        size = OFFERS_BATCH if offers else BATCH
+        for i in range(0, len(asins), size):
+            chunk = asins[i:i + size]
             params = {'domain': self.domain, 'asin': ','.join(chunk), 'stats': stats,
                       'history': 1 if history else 0, 'rating': 1 if rating else 0}
             if history and days:
                 params['days'] = days
-            data = self._call('product', params, label, need=len(chunk) * (2 if rating else 1))
+            if offers:
+                params['offers'] = 20                 # 指定できる最小の件数。PB は出品者が少ないので 1 ページで足りる
+                params['only_live_offers'] = 1        # いま出品中のものだけ（応答を小さくする）
+            per = (2 if rating else 1) + (OFFERS_COST if offers else 0)
+            data = self._call('product', params, label, need=len(chunk) * per)
             for p in data.get('products') or []:
                 if p and p.get('asin') and p.get('title'):
                     out[p['asin']] = p

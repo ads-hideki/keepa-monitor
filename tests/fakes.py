@@ -78,9 +78,20 @@ class FakeKeepaHttp:
         if path == 'product':
             asins = q['asin'].split(',')
             per = 2 if q.get('rating') == '1' else 1
+            offers = bool(q.get('offers'))
+            if offers:
+                assert len(asins) <= 20, '出品者情報を取るときは 20 件まで'
+                per += 6
             if self.tokens < 1:
                 return 429, env(0, error={'type': 'notEnoughToken', 'message': ''})
-            return 200, env(len(asins) * per, products=[self.products.get(a) for a in asins])
+            out = []
+            for a in asins:
+                p = self.products.get(a)
+                # 本物の Keepa と同じく、クーポンは出品者情報を取ったときにだけ最新になる（liveCoupon が最新の値）
+                if p is not None and offers and 'liveCoupon' in p:
+                    p = dict(p, coupon=p['liveCoupon'])
+                out.append(p)
+            return 200, env(len(asins) * per, products=out)
         if path == 'bestsellers':
             lst = self.bestsellers.get(int(q['category']))
             return 200, env(50 if lst else 0, bestSellersList={'asinList': lst} if lst else None)

@@ -194,6 +194,26 @@ class Run:
         self.store.set('state/families', {'updatedAt': self.now.isoformat(), 'items': fams})
         self.families = fams
         self.log('自社カタログ: {} ASIN を取得、{} 商品にまとめました'.format(len(prods), len(fams)))
+        self.own_coupons()
+
+    def own_coupons(self):
+        """自社商品（代表の ASIN）のクーポンを取り直す。Keepa のクーポン情報は出品者情報も取ったときにだけ更新されるため、
+        代表の ASIN だけ、出品者情報つきでもう一度取得して、クーポンの値を差し替える。"""
+        reps = sorted({f['rep'] for f in self.families.values() if f['rep'] in self.own_products})
+        if not reps:
+            return
+        try:
+            fresh = self.keepa.products(reps, history=False, rating=False, label='自社のクーポン', offers=True)
+        except KeepaError as e:
+            self.warnings.append('自社商品のクーポンを取得できませんでした。')
+            self.log('自社のクーポン: 取得を中断（{}）'.format(e))
+            return
+        for a, p in fresh.items():
+            for key in ('coupon', 'couponHistory'):
+                if key in p:
+                    self.own_products[a][key] = p[key]
+        self.log('自社のクーポン: {} 商品中 {} 商品にクーポンあり'.format(
+            len(reps), sum(1 for a in reps if parse.coupon_text((self.own_products.get(a) or {}).get('coupon')))))
 
     def own_status(self, it):
         th = self.th
@@ -324,7 +344,7 @@ class Run:
         pairs = [(parent, a, m, au) for parent in self.families for a, m, au in self.effective_competitors(parent)]
         need = sorted({a for _, a, _, _ in pairs if a not in self.comp_products})
         if need:
-            self.comp_products.update(self.keepa.products(need, history=True, days=days, rating=rating, label='競合'))
+            self.comp_products.update(self.keepa.products(need, history=True, days=days, rating=rating, label='競合', offers=True))
         prev = {(i.get('parent'), i.get('asin')): i for i in (previous or [])}
         flags = (self.store.get('state/flags') or {}).get('items') or {}
         # 大型セールは多くの商品で同時に始まって同時に終わるので、表示名ごとに「どの競合かで最初に見えた日」を使う
