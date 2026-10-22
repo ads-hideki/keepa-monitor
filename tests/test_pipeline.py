@@ -493,6 +493,7 @@ def test_sales_that_already_ended_are_not_shown():
     # 1 件は終了日時を過ぎたセール、1 件は終了日時の無い大型セール（15 日前から表示が続いている）
     products['B0SPR00001']['deals'] = [{'badge': 'プライム感謝祭セール', 'dealType': 'PRIME_DAY', 'endTime': km(NOW - timedelta(days=2))}]
     products['B0SPR00002']['deals'] = [{'badge': 'プライム感謝祭先行セール', 'dealType': 'PRIME_DAY_EARLY'}]
+    products['B0OWN00004']['deals'] = [{'badge': 'プライム感謝祭先行セール', 'dealType': 'PRIME_DAY_EARLY'}]    # 自社商品にも残っている
     store = MemoryStore()
     store.set('settings/families', {'items': {'B0OWN00004': {'competitors': {'B0SPR00001': {'on': True}, 'B0SPR00002': {'on': True}}}}})
     since = (NOW - timedelta(days=15)).strftime('%Y-%m-%d')
@@ -506,6 +507,16 @@ def test_sales_that_already_ended_are_not_shown():
     flag = store.get('state/flags')['items']['B0SPR00002']
     assert flag['dealSince'] == since and flag['badge'] == 'プライム感謝祭先行セール'      # 日数は数え続ける
     assert any('終わったとみなして外した大型セール 1' in line for line in logs)
+    assert {i['parent']: i for i in store.get('views/own')['items']}['B0OWN00004']['deal'] is None
+
+    # 価格だけを取り直す回も、朝の取得で保存した自社商品の一覧から、終わった大型セールの表示を外す
+    own_doc = store.get('views/own')
+    own_doc['items'][0]['deal'] = 'プライム感謝祭先行セール'
+    store.set('views/own', own_doc)
+    runp, store, _, _, _ = make(store=store, http=FakeKeepaHttp(products, best, searches))
+    runp.job_prices()
+    after = store.get('views/own')
+    assert after['items'][0]['deal'] is None and after['updatedAt'] == own_doc['updatedAt']     # 朝の取得の時刻は変えない
 
     # 同じ大型セールが別の競合で最近見え始めても、その表示名が最初に見えた日から数える
     products['B0SPR00001']['deals'] = [{'badge': 'プライム感謝祭先行セール', 'dealType': 'PRIME_DAY_EARLY'}]

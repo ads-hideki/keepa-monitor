@@ -151,6 +151,11 @@ def deal_info(p, now=None):
     return None
 
 
+def is_event_text(text):
+    """表示名から、期間の決まった大型セールかを見分ける（保存済みの表示名だけが手元にあるとき用）。"""
+    return bool(text) and any(w in text for w in EVENT_DEAL_WORDS)
+
+
 def deal_text(p, now=None):
     info = deal_info(p, now)
     return info['text'] if info else None

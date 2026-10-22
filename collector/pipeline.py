@@ -301,7 +301,7 @@ class Run:
                 'reviews': b['reviews'], 'reviews30': parse.value_days_ago(rev_pts, days, self.today),
                 'reviews7': parse.value_days_ago(rev_pts, 7, self.today),
                 'sold': sold_now, 'sold30': max(sold_old) if sold_old else None, 'seasonal': parent in seasonal,
-                'coupon': b['coupon'], 'deal': b['deal'],
+                'coupon': b['coupon'], 'deal': self._own_deal(rep),
                 'changedAt': fam.get('changedAt'), 'changeWhat': fam.get('changeWhat'), 'oos': len(oos),
             }
             it['status'] = self.own_status(it)
@@ -374,9 +374,31 @@ class Run:
         self.log('競合: {} 件（商品との組み合わせ {} 件）'.format(len({a for _, a, _, _ in pairs}), len(items)))
         self.log('競合のセール表示: 終了日時あり {} / 終わったとみなして外した大型セール {} / Keepa の更新が{}時間以上前 {}'.format(
             n_end, n_stale, STALE_HOURS, n_old))
-        if self._event_first:
-            self.log('大型セールが最初に見えた日: ' + '、'.join('{} {}'.format(k, v) for k, v in sorted(self._event_first.items())))
+        events = sorted((k, v) for k, v in self._event_first.items() if parse.is_event_text(k))
+        if events:
+            self.log('大型セールが最初に見えた日: ' + '、'.join('{} {}'.format(k, v) for k, v in events))
         return items
+
+    def _event_ended(self, text):
+        """大型セールの表示名が、どれかの競合で最初に見えた日から EVENT_DEAL_MAX_DAYS 日を過ぎているか。"""
+        first = getattr(self, '_event_first', {}).get(text)
+        return bool(first) and self._days_since(first) > EVENT_DEAL_MAX_DAYS
+
+    def _own_deal(self, p):
+        """自社商品のいまのセール。競合と同じく、終わったセールと、終わったとみなす大型セールは出さない。"""
+        info = parse.deal_info(p, self.now)
+        if not info or (info['event'] and not info['end'] and self._event_ended(info['text'])):
+            return None
+        return info['text']
+
+    def _clean_own_deals(self, own_items):
+        """価格だけを取り直す回は、朝の取得で保存した自社商品の一覧を使う。そこに残った、終わった大型セールの表示を外す。"""
+        n = 0
+        for it in own_items:
+            if it.get('deal') and parse.is_event_text(it['deal']) and self._event_ended(it['deal']):
+                it['deal'] = None
+                n += 1
+        return n
 
     def _deal(self, p, flag):
         """競合のいまのセール。(表示名, 終了日時の文字, Keepa の表示名) を返す。
@@ -1166,7 +1188,10 @@ class Run:
         self.load_candidates()
         previous = (self.store.get('views/comps') or {}).get('items') or []
         self.competitors(days=90, rating=False, previous=previous)
-        own_items = (self.store.get('views/own') or {}).get('items') or []
+        own_doc = self.store.get('views/own') or {}
+        own_items = own_doc.get('items') or []
+        if self._clean_own_deals(own_items):
+            self.store.set('views/own', dict(own_doc, items=own_items))
         cat_items = (self.store.get('views/cats') or {}).get('items') or []
         self.write_views('prices', own_items=own_items, cat_items=cat_items, sales=False)
 
