@@ -5,7 +5,7 @@ import type { Db, TabId } from '../lib/types';
 
 const TAB_NAME: Record<TabId, string> = {
   overview: '概要', price: '価格・販促', category: 'カテゴリ順位', catalog: '自社カタログ',
-  stock: '競合在庫', research: '新商品リサーチ', sales: '販売実績・セール', setup: '競合の設定',
+  stock: '競合在庫', research: '新商品リサーチ', sales: '販売実績・セール', lookup: 'ASIN 検索', setup: '競合の設定',
 };
 const TILES: [TabId, string, string][] = [
   ['price', '競合の値下げ', 'drop'], ['price', 'クーポン・セール開始', 'promo'], ['stock', '競合の在庫切れ', 'stock'],

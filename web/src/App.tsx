@@ -10,11 +10,12 @@ import Price from './tabs/Price';
 import Research from './tabs/Research';
 import Sales from './tabs/Sales';
 import Setup from './tabs/Setup';
+import Lookup from './tabs/Lookup';
 import Stock from './tabs/Stock';
 
 const TABS: [TabId, string, string][] = [
   ['overview', '', '概要'], ['price', '1', '価格・販促'], ['category', '2', 'カテゴリ順位'], ['catalog', '3', '自社カタログ'],
-  ['stock', '4', '競合在庫'], ['research', '5', '新商品リサーチ'], ['sales', '6', '販売実績・セール'], ['setup', '', '競合の設定'],
+  ['stock', '4', '競合在庫'], ['research', '5', '新商品リサーチ'], ['sales', '6', '販売実績・セール'], ['lookup', '', 'ASIN 検索'], ['setup', '', '競合の設定'],
 ];
 const isTab = (v: string): v is TabId => TABS.some(t => t[0] === v);
 
@@ -144,6 +145,7 @@ export default function App() {
         {tab === 'stock' && <Stock {...props} />}
         {tab === 'research' && <><Markets db={db} /><Research db={db} /></>}
         {tab === 'sales' && <Sales {...props} />}
+        {tab === 'lookup' && <Lookup {...props} />}
         {tab === 'setup' && <Setup {...props} />}
       </main>
       <p className="foot">金額は税込の表示価格、順位は Amazon.co.jp のランキングです。データは Keepa から取得しています。</p>

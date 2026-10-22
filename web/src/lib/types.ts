@@ -1,7 +1,7 @@
 // Firestore に保存されるデータの形。collector/pipeline.py が書く内容と対応する。
 
 export type Sev = 'crit' | 'serious' | 'warn' | 'good' | 'info';
-export type TabId = 'overview' | 'price' | 'category' | 'catalog' | 'stock' | 'research' | 'sales' | 'setup';
+export type TabId = 'overview' | 'price' | 'category' | 'catalog' | 'stock' | 'research' | 'sales' | 'lookup' | 'setup';
 
 export interface Alert {
   sev: Sev;
@@ -337,4 +337,41 @@ export interface Db {
   /** 画面で保存したリサーチ条件（まだ取得に反映されていない分を含む） */
   researchSettings: Partial<ResearchParams> | null;
   markets: Markets | null;
+}
+
+/** ASIN 検索の結果（Apps Script の中継が Keepa の値をまとめたもの） */
+export interface LookupItem {
+  asin: string;
+  parent: string;
+  title: string;
+  brand: string;
+  image: string | null;
+  category: string | null;
+  path: string[];
+  price: number | null;
+  avg90: number | null;
+  coupon: string | null;
+  deal: { text: string; end: string | null; event: boolean } | null;
+  rank: number | null;
+  rankDrops30: number | null;
+  rating: number | null;
+  reviews: number | null;
+  sold: number | null;
+  soldPeak: number | null;
+  soldMonths: string[];
+  soldHist: (number | null)[];
+  offers: number | null;
+  amazon: boolean;
+  listedSince: string | null;
+  variations: number;
+  priceHist: (number | null)[];
+  rankHist: (number | null)[];
+  updatedAt: string | null;
+  fetchedAt: string;
+}
+
+export interface LookupResult {
+  item: LookupItem;
+  tokensLeft?: number;
+  tokensUsed?: number;
 }

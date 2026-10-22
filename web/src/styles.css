@@ -255,3 +255,19 @@ button:disabled,input:disabled{opacity:.55;cursor:default}
 .goods{scroll-margin-top:56px}
 .goods .al-p{flex-basis:80px}
 .stale{color:color-mix(in srgb,var(--serious) 80%,var(--ink))}
+
+/* ASIN 検索 */
+.lk-form .fld{flex:1 1 320px}
+.lk-form .fld input{width:100%}
+.lk-recent{display:flex;flex-direction:column;gap:6px}
+.lk-chip{display:inline-flex;flex-direction:column;align-items:flex-start;gap:0;max-width:220px;padding:4px 10px;text-align:left}
+.lk-chip small{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
+.lk-head .thumb{width:72px;height:72px}
+.lk-head h2 .plink{color:inherit}
+.lk-head .pills{margin-top:6px}
+.lk-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+.lk-stat{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface2);min-width:0}
+.lk-l{font-size:12px;color:var(--ink2)}
+.lk-v{font-size:20px;font-weight:600;line-height:1.3;font-variant-numeric:tabular-nums}
+.lk-v .pills{font-size:13px;font-weight:400}
+.lk-s{font-size:12px;color:var(--muted)}

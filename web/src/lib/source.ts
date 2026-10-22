@@ -2,7 +2,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { deleteField, doc, getDoc, getFirestore, setDoc } from 'firebase/firestore';
-import type { CandidateDoc, CompSetting, Db, FamilySetting, ResearchParams } from './types';
+import type { CandidateDoc, CompSetting, Db, FamilySetting, LookupItem, LookupResult, ResearchParams } from './types';
 
 export const MOCK = import.meta.env.VITE_MOCK === '1';
 
@@ -20,6 +20,23 @@ export interface Source {
   savePicks(picks: Record<string, { asin: string; why: string }[]>): Promise<string>;
   saveBrands(excluded: string[]): Promise<void>;
   saveResearch(params: ResearchParams): Promise<void>;
+  /** 1 商品を Keepa で調べる（ASIN 検索）。Apps Script の中継を通す */
+  lookup(asin: string): Promise<LookupResult>;
+}
+
+/** 中継（Apps Script）の返事を読む。失敗のときは、中継が返した日本語の理由をそのまま出す */
+async function callLookup(url: string, body: Record<string, string>): Promise<LookupResult> {
+  let res: Response;
+  try {
+    // text/plain で送ると、ブラウザの事前確認（CORS のプリフライト）が要らず、Apps Script でそのまま受け取れる
+    res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) });
+  } catch {
+    throw new Error('ASIN 検索の中継に接続できませんでした。ネットワークを確認してください。');
+  }
+  let data: { ok?: boolean; error?: string; item?: LookupItem; tokensLeft?: number; tokensUsed?: number };
+  try { data = await res.json(); } catch { throw new Error('ASIN 検索の中継から正しい返事がありませんでした。中継の設定を確認してください。'); }
+  if (!data.ok || !data.item) throw new Error(data.error || '調べられませんでした。');
+  return { item: data.item, tokensLeft: data.tokensLeft, tokensUsed: data.tokensUsed };
 }
 
 function toDb(get: (path: string) => any): Db {
@@ -58,6 +75,27 @@ function mockSource(): Source {
     watchUser(cb) { cb('demo'); return () => {}; },
     async login() {},
     async logout() {},
+    async lookup(asin) {
+      // 模擬データ: 監視中の競合か自社商品にあればその値で、なければ架空の商品を作る
+      const d = await load();
+      const comps = (d['views/comps']?.items ?? []) as { asin: string; title: string; brand: string; image?: string; price: number | null; rating?: number; reviews?: number; sold?: number }[];
+      const c = comps.find(x => x.asin === asin) ?? comps[asin.charCodeAt(9) % Math.max(1, comps.length)];
+      const wave = (n: number, base: number, amp: number) => Array.from({ length: n }, (_, i) => Math.round(base + amp * Math.sin(i / 6)));
+      const months = Array.from({ length: 12 }, (_, i) => { const t = new Date(); t.setMonth(t.getMonth() - 11 + i); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`; });
+      const price = c?.price ?? 2980;
+      return {
+        tokensLeft: 1200, tokensUsed: 8,
+        item: {
+          asin, parent: asin, title: c?.title ?? `模擬の商品 ${asin}`, brand: c?.brand ?? '模擬ブランド', image: c?.image ?? null,
+          category: 'クッション', path: ['ホーム&キッチン', 'クッション'], price, avg90: Math.round(price * 1.04),
+          coupon: '5%OFF', deal: null, rank: 1830, rankDrops30: 64, rating: c?.rating ?? 4.2, reviews: c?.reviews ?? 380,
+          sold: c?.sold ?? 300, soldPeak: 500, soldMonths: months, soldHist: [null, 100, 100, 200, 300, 500, 500, 400, 300, 300, 200, 300],
+          offers: 1, amazon: false, listedSince: '2025-03-14', variations: 4,
+          priceHist: wave(90, price, 150), rankHist: wave(90, 2000, 600),
+          updatedAt: new Date(Date.now() - 3 * 3600000).toISOString(), fetchedAt: new Date().toISOString(),
+        },
+      };
+    },
     async loadAll() { const d = await load(); return toDb(p => structuredClone(d[p])); },
     async candidates(parent) { const d = await load(); return structuredClone(d[`candidates/${parent}`] ?? null); },
     async saveCompetitors(parent, changes) {
@@ -86,7 +124,7 @@ function firebaseSource(): Source {
     // ビルド時に Firebase の設定が渡されていない。画面を真っ白にせず、理由を表示する
     const fail = async () => { throw new Error('Firebase の設定がありません。ビルド時の環境変数を確認してください。'); };
     return { watchUser(cb) { cb(null); return () => {}; }, login: fail, logout: async () => {}, loadAll: fail as never, candidates: fail as never,
-      saveCompetitors: fail, saveKeywords: fail, savePicks: fail as never, saveBrands: fail, saveResearch: fail };
+      saveCompetitors: fail, saveKeywords: fail, savePicks: fail as never, saveBrands: fail, saveResearch: fail, lookup: fail as never };
   }
   const app = initializeApp({
     apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -130,6 +168,13 @@ function firebaseSource(): Source {
     },
     async saveBrands(excluded) { await setDoc(ref('settings/brands'), { excluded }); },
     async saveResearch(params) { await setDoc(ref('settings/research'), params); },
+    async lookup(asin) {
+      const url = String(import.meta.env.VITE_LOOKUP_URL || '');
+      if (!url) throw new Error('ASIN 検索の中継が設定されていません。web/.env.local の VITE_LOOKUP_URL を確認してください。');
+      const user = auth.currentUser;
+      if (!user) throw new Error('ログインし直してください。');
+      return callLookup(url, { asin, idToken: await user.getIdToken() });
+    },
   };
 }
 
